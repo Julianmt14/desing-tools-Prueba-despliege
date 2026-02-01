@@ -1,7 +1,9 @@
 import React from 'react';
+import { Controller } from 'react-hook-form';
 
 const BlockReinforcement = ({
   register,
+  control,
   errors,
   renderError,
   selectedLength,
@@ -19,6 +21,11 @@ const BlockReinforcement = ({
   totalBottomBars,
   topBarsGroupError,
   bottomBarsGroupError,
+  segmentReinforcementFields = [],
+  appendSegmentReinforcement,
+  removeSegmentReinforcement,
+  segmentReinforcementsError,
+  spanOptions = [],
   stirrupFields,
   appendStirrup,
   removeStirrup,
@@ -196,6 +203,159 @@ const BlockReinforcement = ({
           {bottomBarsGroupError && <p className="text-rose-400 text-xs">{bottomBarsGroupError}</p>}
         </div>
       </div>
+    </div>
+
+    <div className="rounded-3xl border border-slate-800 bg-[#030916]/40 p-5 space-y-5">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] uppercase tracking-[0.4em] text-slate-500">Refuerzo para tramos específicos</p>
+        <button
+          type="button"
+          disabled={spanOptions.length === 0}
+          onClick={() =>
+            appendSegmentReinforcement({
+              span_indexes: [],
+              top_quantity: '',
+              top_diameter: '',
+              bottom_quantity: '',
+              bottom_diameter: '',
+            })
+          }
+          className={`text-xs uppercase tracking-[0.3em] transition-colors ${
+            spanOptions.length === 0 ? 'text-slate-600 cursor-not-allowed' : 'text-primary'
+          }`}
+        >
+          + Agregar
+        </button>
+      </div>
+      {segmentReinforcementFields.length === 0 ? (
+        <p className="text-xs text-slate-500">
+          Define aquí refuerzos puntuales cuando requieras barras adicionales en luces o zonas críticas.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {segmentReinforcementFields.map((field, index) => (
+            <div key={field.id} className="rounded-2xl border border-slate-800 bg-[#050b16]/40 p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="label mb-0">Tramos objetivo</p>
+                <button
+                  type="button"
+                  onClick={() => removeSegmentReinforcement(index)}
+                  className="text-xs uppercase tracking-[0.3em] text-slate-500 hover:text-slate-200"
+                >
+                  Quitar
+                </button>
+              </div>
+              <Controller
+                control={control}
+                name={`segment_reinforcements.${index}.span_indexes`}
+                defaultValue={field.span_indexes || []}
+                render={({ field: spanField }) => {
+                  const selectedValues = Array.isArray(spanField.value) ? spanField.value : [];
+                  const toggleSpan = (spanIndex) => {
+                    const exists = selectedValues.includes(spanIndex);
+                    const updated = exists
+                      ? selectedValues.filter((value) => value !== spanIndex)
+                      : [...selectedValues, spanIndex];
+                    spanField.onChange(updated);
+                  };
+                  return (
+                    <div className="flex flex-wrap gap-2">
+                      {spanOptions.length ? (
+                        spanOptions.map((option) => {
+                          const isActive = selectedValues.includes(option.value);
+                          return (
+                            <button
+                              type="button"
+                              key={option.value}
+                              onClick={() => toggleSpan(option.value)}
+                              className={`px-3 py-1 rounded-full border text-[11px] font-semibold tracking-[0.25em] transition-colors ${
+                                isActive ? 'bg-primary/80 text-white border-primary' : 'border-slate-700 text-slate-300'
+                              }`}
+                            >
+                              <span>{option.label}</span>
+                              {option.lengthLabel && <span className="block text-[10px] text-slate-400">{option.lengthLabel}</span>}
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <p className="text-xs text-slate-500">Crea al menos una luz para seleccionar tramos.</p>
+                      )}
+                    </div>
+                  );
+                }}
+              />
+              {errors.segment_reinforcements?.[index]?.span_indexes && (
+                <p className="text-rose-400 text-xs">
+                  {errors.segment_reinforcements[index].span_indexes.message}
+                </p>
+              )}
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="rounded-2xl border border-slate-800 bg-[#040b18]/60 p-4 space-y-2">
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Superior</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="label">Cantidad</label>
+                      <input
+                        type="number"
+                        min={1}
+                        className="input input-compact"
+                        {...register(`segment_reinforcements.${index}.top_quantity`, { valueAsNumber: true })}
+                      />
+                      {errors.segment_reinforcements?.[index]?.top_quantity && (
+                        <p className="text-rose-400 text-xs mt-1">
+                          {errors.segment_reinforcements[index].top_quantity.message}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="label">Diámetro</label>
+                      <select className="input input-compact" {...register(`segment_reinforcements.${index}.top_diameter`)}>
+                        <option value="">Φ</option>
+                        {diameterOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-[#040b18]/60 p-4 space-y-2">
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Inferior</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="label">Cantidad</label>
+                      <input
+                        type="number"
+                        min={1}
+                        className="input input-compact"
+                        {...register(`segment_reinforcements.${index}.bottom_quantity`, { valueAsNumber: true })}
+                      />
+                      {errors.segment_reinforcements?.[index]?.bottom_quantity && (
+                        <p className="text-rose-400 text-xs mt-1">
+                          {errors.segment_reinforcements[index].bottom_quantity.message}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="label">Diámetro</label>
+                      <select className="input input-compact" {...register(`segment_reinforcements.${index}.bottom_diameter`)}>
+                        <option value="">Φ</option>
+                        {diameterOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {segmentReinforcementsError && <p className="text-rose-400 text-xs">{segmentReinforcementsError}</p>}
     </div>
 
     <div className="grid md:grid-cols-2 gap-6">

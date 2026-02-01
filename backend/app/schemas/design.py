@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SpanGeometry(BaseModel):
@@ -15,6 +15,23 @@ class StirrupZone(BaseModel):
     zone: str
     spacing_m: float = Field(..., gt=0)
     quantity: int = Field(..., ge=1)
+
+
+class SegmentRebarConfig(BaseModel):
+    quantity: int = Field(..., ge=1)
+    diameter: str
+
+
+class SegmentReinforcement(BaseModel):
+    span_indexes: list[int] = Field(..., min_length=1)
+    top_rebar: SegmentRebarConfig | None = None
+    bottom_rebar: SegmentRebarConfig | None = None
+
+    @model_validator(mode="after")
+    def ensure_rebar_defined(self) -> "SegmentReinforcement":
+        if not self.top_rebar and not self.bottom_rebar:
+            raise ValueError("Debe definir al menos un refuerzo superior o inferior")
+        return self
 
 
 class DespieceVigaBase(BaseModel):
@@ -41,6 +58,7 @@ class DespieceVigaBase(BaseModel):
     element_quantity: int = Field(default=1, ge=1)
     reinforcement: str
     stirrups_config: list[StirrupZone] = Field(default_factory=list)
+    segment_reinforcements: list[SegmentReinforcement] | None = None
     energy_dissipation_class: str
     concrete_strength: str
     notes: str | None = None
@@ -74,6 +92,7 @@ class DespieceVigaUpdate(BaseModel):
     element_quantity: int | None = Field(default=None, ge=1)
     reinforcement: str | None = None
     stirrups_config: list[StirrupZone] | None = None
+    segment_reinforcements: list[SegmentReinforcement] | None = None
     energy_dissipation_class: str | None = None
     concrete_strength: str | None = None
     notes: str | None = None

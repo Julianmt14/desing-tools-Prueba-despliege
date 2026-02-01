@@ -71,6 +71,7 @@ class DespieceViga(Base):
     element_quantity = Column(Integer, nullable=False, default=1)
     reinforcement = Column(String(100), nullable=False)
     stirrups_config = Column(JSON, nullable=True)
+    segment_reinforcements = Column(JSON, nullable=True)
     energy_dissipation_class = Column(String(3), nullable=False)
     concrete_strength = Column(String(50), nullable=False)
     notes = Column(Text, nullable=True)

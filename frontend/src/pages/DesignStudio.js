@@ -22,6 +22,64 @@ const barGroupSchema = z.object({
   diameter: z.enum(diameterOptions),
 });
 
+const optionalPositiveInt = z.preprocess(
+  (value) => {
+    if (value === '' || value === null) {
+      return undefined;
+    }
+    if (typeof value === 'number' && Number.isNaN(value)) {
+      return undefined;
+    }
+    return value;
+  },
+  z.coerce.number().int().min(1, 'Cantidad mínima 1').optional()
+);
+
+const optionalDiameter = z.preprocess(
+  (value) => (value === '' || value === null ? undefined : value),
+  z.enum(diameterOptions).optional()
+);
+
+const segmentReinforcementSchema = z
+  .object({
+    span_indexes: z.array(z.coerce.number().int().min(0)).min(1, 'Selecciona al menos un tramo'),
+    top_quantity: optionalPositiveInt,
+    top_diameter: optionalDiameter,
+    bottom_quantity: optionalPositiveInt,
+    bottom_diameter: optionalDiameter,
+  })
+  .refine(
+    (data) => {
+      const hasTop = data.top_quantity !== undefined || data.top_diameter !== undefined;
+      return !hasTop || (data.top_quantity !== undefined && data.top_diameter !== undefined);
+    },
+    {
+      message: 'Completa cantidad y diámetro para el refuerzo superior',
+      path: ['top_quantity'],
+    }
+  )
+  .refine(
+    (data) => {
+      const hasBottom = data.bottom_quantity !== undefined || data.bottom_diameter !== undefined;
+      return !hasBottom || (data.bottom_quantity !== undefined && data.bottom_diameter !== undefined);
+    },
+    {
+      message: 'Completa cantidad y diámetro para el refuerzo inferior',
+      path: ['bottom_quantity'],
+    }
+  )
+  .refine(
+    (data) => {
+      const hasTop = data.top_quantity !== undefined && data.top_diameter !== undefined;
+      const hasBottom = data.bottom_quantity !== undefined && data.bottom_diameter !== undefined;
+      return hasTop || hasBottom;
+    },
+    {
+      message: 'Define al menos un refuerzo superior o inferior',
+      path: ['span_indexes'],
+    }
+  );
+
 const stirrupSchema = z.object({
   zone: z.string().min(1, 'Requerido'),
   spacing_m: z.coerce.number().positive('Ingrese un espaciamiento válido'),
@@ -77,6 +135,7 @@ const formSchema = z.object({
     )
     .optional(),
   span_count: z.coerce.number().int().positive('Ingresa un número entero positivo'),
+  segment_reinforcements: z.array(segmentReinforcementSchema).optional(),
   stirrups_config: z.array(stirrupSchema).min(1, 'Agrega al menos una zona'),
   energy_dissipation_class: z.enum(energyOptions),
   concrete_strength: z.string().min(1, 'Selecciona f’c'),
@@ -91,6 +150,17 @@ const calculateBeamTotalLength = (spans, supports) => {
   return Number.isFinite(total) ? Number(total.toFixed(2)) : 0;
 };
 
+const formatDimensionValue = (value) => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return Number(numeric.toFixed(2));
+};
+
 const defaultValues = {
   project_name: 'Centro Cultural La Estación',
   beam_label: 'VIGA-E3-12',
@@ -102,6 +172,7 @@ const defaultValues = {
     { quantity: 2, diameter: '#6' },
   ],
   bottom_bars_config: [{ quantity: 2, diameter: '#5' }],
+  segment_reinforcements: [],
   max_rebar_length_m: '9m',
   lap_splice_length_min_m: 0.75,
   lap_splice_location: 'Traslapo centrado a 1.50 m del apoyo A',
@@ -169,6 +240,12 @@ const DesignStudio = () => {
     remove: removeBottomBarGroup,
   } = useFieldArray({ control, name: 'bottom_bars_config' });
 
+  const {
+    fields: segmentReinforcementFields,
+    append: appendSegmentReinforcement,
+    remove: removeSegmentReinforcement,
+  } = useFieldArray({ control, name: 'segment_reinforcements' });
+
   const { fields: axisSupportFields, replace: replaceAxisSupports } = useFieldArray({ control, name: 'axis_supports' });
   const { fields: spanGeometryFields, replace: replaceSpanGeometries } = useFieldArray({ control, name: 'span_geometries' });
 
@@ -182,6 +259,7 @@ const DesignStudio = () => {
   const watchFinalCantilever = watch('has_final_cantilever');
   const watchTopBarGroups = watch('top_bars_config');
   const watchBottomBarGroups = watch('bottom_bars_config');
+  const watchSegmentReinforcements = watch('segment_reinforcements');
   const watchBeamTotalLength = watch('beam_total_length_m');
   const summarizeBarConfig = (config) => {
     if (!Array.isArray(config) || config.length === 0) {
@@ -237,9 +315,23 @@ const DesignStudio = () => {
     () => summarizeBarConfig(watchBottomBarGroups),
     [watchBottomBarGroups]
   );
+  const segmentReinforcementsError =
+    errors.segment_reinforcements?.root?.message || errors.segment_reinforcements?.message;
   const beamTotalLength = useMemo(
     () => calculateBeamTotalLength(watchSpanGeometries, watchAxisSupports),
     [watchSpanGeometries, watchAxisSupports]
+  );
+  const spanOptions = useMemo(
+    () =>
+      (watchSpanGeometries || []).map((span, index) => {
+        const lengthValue = formatDimensionValue(span?.clear_span_between_supports_m);
+        return {
+          value: index,
+          label: `Tramo ${index + 1}`,
+          lengthLabel: lengthValue !== null ? `${lengthValue} m` : null,
+        };
+      }),
+    [watchSpanGeometries]
   );
   const elementLevelField = register('element_level', { valueAsNumber: true });
 
@@ -280,6 +372,26 @@ const DesignStudio = () => {
     });
     replaceSpanGeometries(nextSpans);
   }, [watchSpanCount, watchSpanGeometries, replaceSpanGeometries]);
+
+  useEffect(() => {
+    if (!Array.isArray(watchSegmentReinforcements) || !Array.isArray(watchSpanGeometries)) {
+      return;
+    }
+    const totalSpans = watchSpanGeometries.length;
+    watchSegmentReinforcements.forEach((reinforcement, index) => {
+      const current = Array.isArray(reinforcement?.span_indexes) ? reinforcement.span_indexes : [];
+      if (totalSpans === 0) {
+        if (current.length > 0) {
+          setValue(`segment_reinforcements.${index}.span_indexes`, [], { shouldDirty: true });
+        }
+        return;
+      }
+      const filtered = current.filter((spanIndex) => spanIndex >= 0 && spanIndex < totalSpans);
+      if (filtered.length !== current.length) {
+        setValue(`segment_reinforcements.${index}.span_indexes`, filtered, { shouldDirty: true });
+      }
+    });
+  }, [watchSegmentReinforcements, watchSpanGeometries, setValue]);
 
   useEffect(() => {
     if (!Array.isArray(watchAxisSupports) || watchAxisSupports.length === 0) {
@@ -349,17 +461,6 @@ const DesignStudio = () => {
     };
   }, [watchSpanCount, watchInitialCantilever, watchFinalCantilever, beamTotalLength]);
 
-  const formatDimensionValue = (value) => {
-    if (value === undefined || value === null) {
-      return null;
-    }
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) {
-      return null;
-    }
-    return Number(numeric.toFixed(2));
-  };
-
   const handleLevelBlur = (event) => {
     const rawValue = event.target.value;
     if (rawValue === '') {
@@ -407,6 +508,7 @@ const DesignStudio = () => {
         stirrups_config,
         top_bars_config,
         bottom_bars_config,
+        segment_reinforcements,
         element_level,
         beam_total_length_m,
         ...rest
@@ -445,6 +547,27 @@ const DesignStudio = () => {
       const hasCantilevers = Boolean(has_initial_cantilever || has_final_cantilever);
       const expandedTopBars = expandBarConfig(top_bars_config);
       const expandedBottomBars = expandBarConfig(bottom_bars_config);
+      const normalizeRebarGroup = (quantity, diameter) => {
+        const qtyValue = Number(quantity);
+        if (!Number.isFinite(qtyValue) || !diameter) {
+          return null;
+        }
+        return { quantity: qtyValue, diameter };
+      };
+      const segmentReinforcementsPayload = (segment_reinforcements || [])
+        .map((entry) => {
+          const spanIndexes = Array.isArray(entry?.span_indexes)
+            ? entry.span_indexes
+                .map((index) => Number(index))
+                .filter((index) => Number.isFinite(index) && index >= 0)
+            : [];
+          return {
+            span_indexes: spanIndexes,
+            top_rebar: normalizeRebarGroup(entry.top_quantity, entry.top_diameter),
+            bottom_rebar: normalizeRebarGroup(entry.bottom_quantity, entry.bottom_diameter),
+          };
+        })
+        .filter((entry) => entry.span_indexes.length > 0 && (entry.top_rebar || entry.bottom_rebar));
 
       const payload = {
         ...rest,
@@ -459,6 +582,7 @@ const DesignStudio = () => {
         top_bar_diameters: expandedTopBars,
         bottom_bar_diameters: expandedBottomBars,
         section_changes: validSectionChanges.length ? validSectionChanges : null,
+        segment_reinforcements: segmentReinforcementsPayload.length ? segmentReinforcementsPayload : null,
         stirrups_config: stirrups_config.map((zone) => ({
           zone: zone.zone,
           spacing_m: Number(zone.spacing_m),
@@ -538,6 +662,7 @@ const DesignStudio = () => {
 
             <BlockReinforcement
               register={register}
+              control={control}
               errors={errors}
               renderError={renderError}
               selectedLength={selectedLength}
@@ -557,6 +682,11 @@ const DesignStudio = () => {
               bottomBarCharacteristics={bottomBarCharacteristics}
               topBarsGroupError={topBarsGroupError}
               bottomBarsGroupError={bottomBarsGroupError}
+              segmentReinforcementFields={segmentReinforcementFields}
+              appendSegmentReinforcement={appendSegmentReinforcement}
+              removeSegmentReinforcement={removeSegmentReinforcement}
+              segmentReinforcementsError={segmentReinforcementsError}
+              spanOptions={spanOptions}
               stirrupFields={stirrupFields}
               appendStirrup={appendStirrup}
               removeStirrup={removeStirrup}
