@@ -1,6 +1,14 @@
 from datetime import datetime, timedelta
+from types import SimpleNamespace
+
+import bcrypt
 from jose import jwt, JWTError
 from passlib.context import CryptContext
+
+# Algunas versiones de bcrypt eliminan el atributo __about__ requerido por Passlib.
+# Para mantener compatibilidad, inyectamos un contenedor mínimo cuando falte.
+if not hasattr(bcrypt, "__about__"):
+    bcrypt.__about__ = SimpleNamespace(__version__=getattr(bcrypt, "__version__", "unknown"))
 
 from app.core.config import settings
 

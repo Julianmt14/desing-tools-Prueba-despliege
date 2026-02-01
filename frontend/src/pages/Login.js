@@ -1,4 +1,5 @@
 import React from 'react';
+import axios from 'axios';
 import {
   Box,
   Card,
@@ -28,7 +29,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
 const loginSchema = z.object({
-  email: z.string().email('Email inválido').min(1, 'Email es requerido'),
+  identifier: z.string().min(1, 'Ingresa tu usuario o correo'),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
 });
 
@@ -44,7 +45,7 @@ const Login = ({ onLogin }) => {
   } = useForm({
     resolver: zodResolver(loginSchema),
     defaultValues: {
-      email: '',
+      identifier: '',
       password: '',
     },
   });
@@ -52,19 +53,25 @@ const Login = ({ onLogin }) => {
   const onSubmit = async (data) => {
     setIsLoading(true);
     try {
-      // Simular llamada a la API
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // En una app real, aquí harías la llamada a tu backend
-      // const response = await axios.post('/token', data);
-      // onLogin(response.data.access_token);
-      
-      // Por ahora, simulamos un login exitoso
-      onLogin('simulated-access-token');
+      const formData = new URLSearchParams();
+      formData.append('username', data.identifier.trim());
+      formData.append('password', data.password);
+
+      const response = await axios.post('/api/v1/auth/login', formData, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
+
+      const token = response.data?.access_token;
+      if (!token) {
+        throw new Error('No se recibió el token de acceso.');
+      }
+
+      onLogin(token);
       toast.success('¡Bienvenido de nuevo!');
       navigate('/');
     } catch (error) {
-      toast.error('Credenciales incorrectas. Por favor, intenta de nuevo.');
+      const backendMessage = error.response?.data?.detail;
+      toast.error(backendMessage || 'Credenciales incorrectas. Por favor, intenta de nuevo.');
     } finally {
       setIsLoading(false);
     }
@@ -126,11 +133,11 @@ const Login = ({ onLogin }) => {
             <form onSubmit={handleSubmit(onSubmit)}>
               <TextField
                 fullWidth
-                label="Email"
-                type="email"
-                {...register('email')}
-                error={!!errors.email}
-                helperText={errors.email?.message}
+                label="Usuario o correo"
+                type="text"
+                {...register('identifier')}
+                error={!!errors.identifier}
+                helperText={errors.identifier?.message}
                 margin="normal"
                 variant="outlined"
                 InputProps={{

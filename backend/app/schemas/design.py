@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -37,31 +37,43 @@ class SegmentReinforcement(BaseModel):
 class DespieceVigaBase(BaseModel):
     project_name: str
     beam_label: str
-    top_bars_qty: int = Field(..., ge=0)
-    bottom_bars_qty: int = Field(..., ge=0)
-    top_bar_diameters: list[str] | None = None
-    bottom_bar_diameters: list[str] | None = None
-    max_rebar_length_m: str
-    lap_splice_length_min_m: float = Field(..., gt=0)
+    top_bars_qty: int
+    bottom_bars_qty: int
+    top_bar_diameters: Optional[List[str]] = None
+    bottom_bar_diameters: Optional[List[str]] = None
+    max_rebar_length_m: str = "12m"
+    lap_splice_length_min_m: float = 0.75
     lap_splice_location: str
-    beam_total_length_m: float = Field(..., ge=0)
-    section_changes: list[SpanGeometry] | None = None
+    beam_total_length_m: float = 0
+    section_changes: Optional[List[Dict[str, Any]]] = None
     has_cantilevers: bool = False
-    hook_type: str
-    cover_cm: int = Field(..., ge=0)
-    span_count: int = Field(..., ge=1)
-    support_widths_cm: list[float] | None = None
-    span_geometries: list[SpanGeometry] = Field(default_factory=list)
-    axis_numbering: str | None = None
+    hook_type: str = "135"
+    cover_cm: int = 4
+    span_count: int = 1
+    support_widths_cm: Optional[List[float]] = None
+    span_geometries: List[Dict[str, Any]]
+    axis_numbering: Optional[str] = None
     element_identifier: str
-    element_level: float | None = Field(default=None)
-    element_quantity: int = Field(default=1, ge=1)
-    reinforcement: str
-    stirrups_config: list[StirrupZone] = Field(default_factory=list)
-    segment_reinforcements: list[SegmentReinforcement] | None = None
-    energy_dissipation_class: str
-    concrete_strength: str
-    notes: str | None = None
+    element_level: Optional[float] = None
+    element_quantity: int = 1
+    reinforcement: str = "420 MPa (Grado 60)"
+    stirrups_config: Optional[List[Dict[str, Any]]] = None
+    segment_reinforcements: Optional[List[Dict[str, Any]]] = None
+    energy_dissipation_class: str = "DES"
+    concrete_strength: str = "21 MPa (3000 psi)"
+    notes: Optional[str] = None
+    detailing_computed: bool = False
+    detailing_results: Optional[Dict[str, Any]] = None
+    detailing_warnings: Optional[List[str]] = None
+    bar_detailing: Optional[Dict[str, Any]] = None
+    prohibited_zones: Optional[List[Dict[str, Any]]] = None
+    material_list: Optional[List[Dict[str, Any]]] = None
+    total_bars_count: Optional[int] = None
+    total_rebar_weight_kg: Optional[float] = None
+    waste_percentage: Optional[float] = None
+    optimization_score: Optional[float] = None
+    detailing_version: Optional[str] = None
+    detailing_computed_at: Optional[datetime] = None
 
 
 class DespieceVigaCreate(DespieceVigaBase):
@@ -69,33 +81,45 @@ class DespieceVigaCreate(DespieceVigaBase):
 
 
 class DespieceVigaUpdate(BaseModel):
-    project_name: str | None = None
-    beam_label: str | None = None
-    top_bars_qty: int | None = Field(default=None, ge=0)
-    bottom_bars_qty: int | None = Field(default=None, ge=0)
-    top_bar_diameters: list[str] | None = None
-    bottom_bar_diameters: list[str] | None = None
-    max_rebar_length_m: str | None = None
-    lap_splice_length_min_m: float | None = Field(default=None, gt=0)
-    lap_splice_location: str | None = None
-    beam_total_length_m: float | None = Field(default=None, ge=0)
-    section_changes: list[SpanGeometry] | None = None
-    has_cantilevers: bool | None = None
-    hook_type: str | None = None
-    cover_cm: int | None = Field(default=None, ge=0)
-    span_count: int | None = Field(default=None, ge=1)
-    support_widths_cm: list[float] | None = None
-    span_geometries: list[SpanGeometry] | None = None
-    axis_numbering: str | None = None
-    element_identifier: str | None = None
-    element_level: float | None = Field(default=None)
-    element_quantity: int | None = Field(default=None, ge=1)
-    reinforcement: str | None = None
-    stirrups_config: list[StirrupZone] | None = None
-    segment_reinforcements: list[SegmentReinforcement] | None = None
-    energy_dissipation_class: str | None = None
-    concrete_strength: str | None = None
-    notes: str | None = None
+    project_name: Optional[str] = None
+    beam_label: Optional[str] = None
+    top_bars_qty: Optional[int] = None
+    bottom_bars_qty: Optional[int] = None
+    top_bar_diameters: Optional[List[str]] = None
+    bottom_bar_diameters: Optional[List[str]] = None
+    max_rebar_length_m: Optional[str] = None
+    lap_splice_length_min_m: Optional[float] = None
+    lap_splice_location: Optional[str] = None
+    beam_total_length_m: Optional[float] = None
+    section_changes: Optional[List[Dict[str, Any]]] = None
+    has_cantilevers: Optional[bool] = None
+    hook_type: Optional[str] = None
+    cover_cm: Optional[int] = None
+    span_count: Optional[int] = None
+    support_widths_cm: Optional[List[float]] = None
+    span_geometries: Optional[List[Dict[str, Any]]] = None
+    axis_numbering: Optional[str] = None
+    element_identifier: Optional[str] = None
+    element_level: Optional[float] = None
+    element_quantity: Optional[int] = None
+    reinforcement: Optional[str] = None
+    stirrups_config: Optional[List[Dict[str, Any]]] = None
+    segment_reinforcements: Optional[List[Dict[str, Any]]] = None
+    energy_dissipation_class: Optional[str] = None
+    concrete_strength: Optional[str] = None
+    notes: Optional[str] = None
+    detailing_computed: Optional[bool] = None
+    detailing_results: Optional[Dict[str, Any]] = None
+    detailing_warnings: Optional[List[str]] = None
+    bar_detailing: Optional[Dict[str, Any]] = None
+    prohibited_zones: Optional[List[Dict[str, Any]]] = None
+    material_list: Optional[List[Dict[str, Any]]] = None
+    total_bars_count: Optional[int] = None
+    total_rebar_weight_kg: Optional[float] = None
+    waste_percentage: Optional[float] = None
+    optimization_score: Optional[float] = None
+    detailing_version: Optional[str] = None
+    detailing_computed_at: Optional[datetime] = None
 
 
 class DespieceVigaRead(DespieceVigaBase):

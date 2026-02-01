@@ -7,16 +7,22 @@ import toast from 'react-hot-toast';
 import BlockIdentification from './DesignStudioSections/BlockIdentification';
 import BlockGeometrySupports from './DesignStudioSections/BlockGeometrySupports';
 import BlockReinforcement from './DesignStudioSections/BlockReinforcement';
+import {
+  MAX_BAR_LENGTH_OPTIONS,
+  getEnergyOptions,
+  getHookOptionsForClass,
+  getDiameterOptions,
+  validateNSR10,
+} from '../utils/nsr10Constants';
+import { useBeamDetailing, extractBeamData } from '../hooks/useBeamDetailing';
+import BeamDetailingView from './DesignStudioSections/BeamDetailingView';
 
-const energyOptions = ['DES', 'DMO', 'DMI'];
-const lengthOptions = ['6m', '9m', '12m'];
-const hookValues = ['90', '135', '180'];
-const hookOptions = [
-  { label: '90°', value: '90' },
-  { label: '135°', value: '135' },
-  { label: '180°', value: '180' },
-];
-const diameterOptions = ['#2', '#3', '#4', '#5', '#6', '#7', '#8', '#9', '#10', '#11', '#14', '#18'];
+
+const energyOptions = getEnergyOptions();
+const lengthOptions = MAX_BAR_LENGTH_OPTIONS;
+const diameterOptions = getDiameterOptions();
+const DEFAULT_ENERGY_CLASS = 'DES';
+const defaultHookOptions = getHookOptionsForClass(DEFAULT_ENERGY_CLASS);
 const barGroupSchema = z.object({
   quantity: z.coerce.number().int().min(1, 'Cantidad mínima 1'),
   diameter: z.enum(diameterOptions),
@@ -113,7 +119,7 @@ const formSchema = z.object({
   beam_total_length_m: z.coerce.number().nonnegative('Longitud total inválida'),
   has_initial_cantilever: z.boolean(),
   has_final_cantilever: z.boolean(),
-  hook_type: z.enum(hookOptions.map((opt) => opt.value)),
+  hook_type: z.enum(defaultHookOptions.map((opt) => opt.value)),
   cover_cm: z.coerce.number().int().min(1, 'Define el recubrimiento en cm'),
   span_geometries: z
     .array(
@@ -196,7 +202,7 @@ const defaultValues = {
     { zone: 'Confinada', spacing_m: 0.07, quantity: 18 },
     { zone: 'Central', spacing_m: 0.15, quantity: 12 },
   ],
-  energy_dissipation_class: 'DES',
+  energy_dissipation_class: DEFAULT_ENERGY_CLASS,
   concrete_strength: '21 MPa (3000 psi)',
   reinforcement: '420 MPa (Grado 60)',
   notes: 'Detalle conforme a NSR-10 Título C.\nConsiderar recubrimientos adicionales por exposición costa.',
@@ -207,6 +213,11 @@ defaultValues.beam_total_length_m = calculateBeamTotalLength(defaultValues.span_
 const DesignStudio = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastDesign, setLastDesign] = useState(null);
+  const [hookOptions, setHookOptions] = useState(() => defaultHookOptions);
+  const [showDetailing, setShowDetailing] = useState(false);
+  const [detailingResults, setDetailingResults] = useState(null);
+
+  const { isComputing: isDetailingComputing, error: detailingError, computeDetailing } = useBeamDetailing();
 
   const {
     control,
@@ -251,6 +262,7 @@ const DesignStudio = () => {
 
   const energyClass = watch('energy_dissipation_class');
   const selectedLength = watch('max_rebar_length_m');
+  const watchHookType = watch('hook_type');
   const watchStirrups = watch('stirrups_config');
   const watchSpanCount = watch('span_count');
   const watchAxisSupports = watch('axis_supports');
@@ -261,6 +273,10 @@ const DesignStudio = () => {
   const watchBottomBarGroups = watch('bottom_bars_config');
   const watchSegmentReinforcements = watch('segment_reinforcements');
   const watchBeamTotalLength = watch('beam_total_length_m');
+  const nsrWarnings = useMemo(
+    () => validateNSR10({ energy_dissipation_class: energyClass, hook_type: watchHookType }),
+    [energyClass, watchHookType]
+  );
   const summarizeBarConfig = (config) => {
     if (!Array.isArray(config) || config.length === 0) {
       return {
@@ -334,6 +350,17 @@ const DesignStudio = () => {
     [watchSpanGeometries]
   );
   const elementLevelField = register('element_level', { valueAsNumber: true });
+
+  useEffect(() => {
+    if (!energyClass) {
+      return;
+    }
+    const allowedOptions = getHookOptionsForClass(energyClass);
+    setHookOptions(allowedOptions);
+    if (allowedOptions.length && !allowedOptions.some((option) => option.value === watchHookType)) {
+      setValue('hook_type', allowedOptions[0].value, { shouldDirty: true });
+    }
+  }, [energyClass, watchHookType, setValue]);
 
   useEffect(() => {
     const spanTotal = Number(watchSpanCount) || 0;
@@ -492,6 +519,17 @@ const DesignStudio = () => {
     return expanded;
   };
 
+  const handleComputeDetailing = async () => {
+    const values = watch();
+    const beamData = extractBeamData(values);
+
+    const result = await computeDetailing(beamData);
+    if (result.success) {
+      setDetailingResults(result.data);
+      setShowDetailing(true);
+    }
+  };
+
   const onSubmit = async (values) => {
     setIsSubmitting(true);
     try {
@@ -590,7 +628,7 @@ const DesignStudio = () => {
         })),
       };
 
-      const response = await axios.post('/api/tools/despiece/designs', payload, {
+      const response = await axios.post('/api/v1/tools/despiece/designs', payload, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -690,6 +728,10 @@ const DesignStudio = () => {
               stirrupFields={stirrupFields}
               appendStirrup={appendStirrup}
               removeStirrup={removeStirrup}
+              onComputeDetailing={handleComputeDetailing}
+              isDetailingComputing={isDetailingComputing}
+              detailingError={detailingError}
+              nsrWarnings={nsrWarnings}
             />
 
             <div>
@@ -698,6 +740,24 @@ const DesignStudio = () => {
             </div>
 
             <div className="flex flex-col sm:flex-row gap-4">
+              <button
+                type="button"
+                onClick={handleComputeDetailing}
+                disabled={isDetailingComputing}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-2xl text-sm font-bold uppercase tracking-[0.3em] transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDetailingComputing ? (
+                  <>
+                    <span className="material-symbols-outlined animate-spin mr-2">refresh</span>
+                    Calculando...
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined mr-2">calculate</span>
+                    Calcular Despiece NSR-10
+                  </>
+                )}
+              </button>
               <button
                 type="submit"
                 disabled={isSubmitting}
@@ -710,7 +770,7 @@ const DesignStudio = () => {
                 onClick={() => reset(defaultValues)}
                 className="px-6 py-3 rounded-2xl border border-slate-700 text-sm font-bold uppercase tracking-[0.3em]"
               >
-                Restaurar presets
+                Restaurar
               </button>
             </div>
           </form>
@@ -765,6 +825,31 @@ const DesignStudio = () => {
               <p className="text-slate-500 text-sm">Aún no has sincronizado este despiece.</p>
             )}
           </div>
+
+          {showDetailing && (
+            <div className="bg-[#0c1326] border border-slate-800 rounded-3xl p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.4em] text-slate-400">
+                  Despiece Automático NSR-10
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowDetailing(false)}
+                  className="text-xs text-slate-500 hover:text-slate-300"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+
+              {detailingError && (
+                <div className="bg-rose-900/20 border border-rose-700/50 rounded-xl p-4">
+                  <p className="text-rose-300 text-sm">{detailingError}</p>
+                </div>
+              )}
+
+              <BeamDetailingView detailingResults={detailingResults} beamData={extractBeamData(watch())} />
+            </div>
+          )}
 
           <div className="bg-gradient-to-br from-primary/40 via-indigo-500/20 to-slate-900 rounded-3xl border border-primary/30 p-6 text-sm">
             <p className="uppercase tracking-[0.4em] text-[11px] text-slate-200 mb-3">Checklist normativo</p>

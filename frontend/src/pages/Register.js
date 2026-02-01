@@ -1,4 +1,5 @@
 import React from 'react';
+import axios from 'axios';
 import {
   Box,
   Card,
@@ -27,11 +28,19 @@ import { z } from 'zod';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
+const MAX_PASSWORD_BYTES = 72;
+const textEncoder = new TextEncoder();
+
 const registerSchema = z.object({
   username: z.string().min(3, 'El nombre de usuario debe tener al menos 3 caracteres'),
   email: z.string().email('Email inválido').min(1, 'Email es requerido'),
   fullName: z.string().min(2, 'El nombre completo es requerido'),
-  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
+  password: z
+    .string()
+    .min(6, 'La contraseña debe tener al menos 6 caracteres')
+    .refine((value) => textEncoder.encode(value).length <= MAX_PASSWORD_BYTES, {
+      message: 'La contraseña no puede superar 72 caracteres/bytes',
+    }),
   confirmPassword: z.string().min(6, 'La confirmación es requerida'),
 }).refine((data) => data.password === data.confirmPassword, {
   message: 'Las contraseñas no coinciden',
@@ -62,16 +71,20 @@ const Register = () => {
   const onSubmit = async (data) => {
     setIsLoading(true);
     try {
-      // Simular llamada a la API
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // En una app real, aquí harías la llamada a tu backend
-      // await axios.post('/users/', data);
-      
+      const payload = {
+        username: data.username.trim(),
+        email: data.email.trim(),
+        full_name: data.fullName.trim(),
+        password: data.password,
+      };
+
+      await axios.post('/api/v1/auth/register', payload);
+
       toast.success('¡Cuenta creada exitosamente! Por favor, inicia sesión.');
       navigate('/login');
     } catch (error) {
-      toast.error('Error al crear la cuenta. Por favor, intenta de nuevo.');
+      const backendMessage = error.response?.data?.detail;
+      toast.error(backendMessage || 'Error al crear la cuenta. Por favor, intenta de nuevo.');
     } finally {
       setIsLoading(false);
     }

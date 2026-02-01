@@ -1,5 +1,6 @@
 import React from 'react';
 import { Controller } from 'react-hook-form';
+import { useBeamDetailing } from '../../hooks/useBeamDetailing';
 
 const BlockReinforcement = ({
   register,
@@ -29,8 +30,32 @@ const BlockReinforcement = ({
   stirrupFields,
   appendStirrup,
   removeStirrup,
-}) => (
-  <div className="space-y-6 bg-[#030a18]/70 border border-slate-900 rounded-3xl p-6 shadow-[0_18px_70px_rgba(2,6,23,0.6)]">
+  onComputeDetailing,
+  isDetailingComputing = false,
+  detailingError = null,
+  nsrWarnings = [],
+}) => {
+  const {
+    isComputing: fallbackDetailingComputing,
+    error: fallbackDetailingError,
+    computeDetailing: fallbackComputeDetailing,
+  } = useBeamDetailing();
+
+  const hasExternalDetailing = typeof onComputeDetailing === 'function';
+  const detailingHandler = hasExternalDetailing ? onComputeDetailing : fallbackComputeDetailing;
+  const detailingIsComputing = hasExternalDetailing ? isDetailingComputing : fallbackDetailingComputing;
+  const detailingStatusError = hasExternalDetailing ? detailingError : fallbackDetailingError;
+  const hookWarnings = Array.isArray(nsrWarnings) ? nsrWarnings : [];
+
+  const handleDetailingClick = () => {
+    if (!detailingHandler) {
+      return;
+    }
+    detailingHandler();
+  };
+
+  return (
+    <div className="space-y-6 bg-[#030a18]/70 border border-slate-900 rounded-3xl p-6 shadow-[0_18px_70px_rgba(2,6,23,0.6)]">
     <header className="flex items-center justify-between">
       <div>
         <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Bloque 03</p>
@@ -69,6 +94,11 @@ const BlockReinforcement = ({
             ))}
           </select>
           {renderError('hook_type')}
+          {hookWarnings.map((warning) => (
+            <p key={warning} className="text-amber-300 text-xs mt-1">
+              {warning}
+            </p>
+          ))}
         </div>
         <div>
           <label className="label">Recubrimiento (cm)</label>
@@ -435,7 +465,73 @@ const BlockReinforcement = ({
         {errors.stirrups_config?.message && <p className="text-rose-400 text-xs">{errors.stirrups_config.message}</p>}
       </div>
     </div>
-  </div>
-);
+
+    <div className="rounded-3xl border border-slate-800 bg-gradient-to-r from-primary/10 to-emerald-500/10 p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.4em] text-slate-400">Despiece automático</p>
+          <h3 className="text-lg font-semibold">Cálculo NSR-10</h3>
+        </div>
+        <span className="material-symbols-outlined text-primary">engineering</span>
+      </div>
+
+      <p className="text-sm text-slate-300 mb-4">
+        Calcula automáticamente el despiece longitudinal según disposiciones sísmicas NSR-10 Título C.
+      </p>
+
+      <button
+        type="button"
+        onClick={handleDetailingClick}
+        disabled={
+          detailingIsComputing ||
+          totalTopBars === 0 ||
+          totalBottomBars === 0 ||
+          typeof detailingHandler !== 'function'
+        }
+        className={`w-full py-3 rounded-xl text-sm font-bold uppercase tracking-[0.3em] transition-all ${
+          detailingIsComputing ? 'bg-slate-700 text-slate-400 cursor-not-allowed' : 'bg-primary hover:bg-primary/80 text-white'
+        }`}
+      >
+        {detailingIsComputing ? (
+          <>
+            <span className="material-symbols-outlined animate-spin mr-2">refresh</span>
+            Procesando cálculo NSR-10...
+          </>
+        ) : (
+          <>
+            <span className="material-symbols-outlined mr-2">bolt</span>
+            Generar despiece sísmico
+          </>
+        )}
+      </button>
+
+      {detailingStatusError && (
+        <div className="mt-3 p-3 bg-rose-900/30 border border-rose-700/50 rounded-lg">
+          <p className="text-sm text-rose-300">{detailingStatusError}</p>
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-slate-400">
+        <div className="flex items-center gap-2">
+          <span className="material-symbols-outlined text-primary text-sm">check_circle</span>
+          Barras continuas
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="material-symbols-outlined text-primary text-sm">check_circle</span>
+          Zonas prohibidas
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="material-symbols-outlined text-primary text-sm">check_circle</span>
+          Empalmes clase B
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="material-symbols-outlined text-primary text-sm">check_circle</span>
+          Validación DES
+        </div>
+      </div>
+    </div>
+    </div>
+  );
+};
 
 export default BlockReinforcement;

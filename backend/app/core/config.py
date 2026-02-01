@@ -1,5 +1,7 @@
+from typing import Optional
+
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -12,18 +14,22 @@ class Settings(BaseSettings):
     postgres_user: str = "postgres"
     postgres_password: str = "postgres"
     postgres_db: str = "design_tools"
-    database_url: str | None = None
+    database_url: Optional[str] = None
 
     secret_key: str = "change-me"
     access_token_expire_minutes: int = 30
     cors_origins: list[str] = ["http://localhost:3001"]
-    allowed_origins: list[str] | None = None
+    allowed_origins: Optional[list[str]] = None
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        case_sensitive=False,
-        extra="ignore",
-    )
+    DETALING_MAX_RECURSION_DEPTH: int = 10
+    DETALING_COMPUTATION_TIMEOUT: int = 30  # segundos
+    DETALING_OPTIMIZATION_ENABLED: bool = True
+    DETALING_VALIDATION_STRICT: bool = True
+
+    NSR10_DEFAULT_ENERGY_CLASS: str = "DES"
+    NSR10_MIN_CONTINUOUS_BARS: int = 2
+    NSR10_NO_SPLICE_ZONE_FACTOR: float = 2.0
+    NSR10_MIN_POSITIVE_IN_SUPPORTS: float = 0.33
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -52,6 +58,11 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return self.allowed_origins or self.cors_origins
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = True
+        extra = "ignore"
 
 
 settings = Settings()

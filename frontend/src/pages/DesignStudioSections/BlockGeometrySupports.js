@@ -80,66 +80,74 @@ const BlockGeometrySupports = ({ register, renderError, axisSupportFields, spanG
         <p className="text-xs text-slate-500">Ajusta el número de luces para generar las configuraciones.</p>
       ) : (
         <div className="space-y-4">
-          {spanGeometryFields.map((field, index) => (
-            <div key={field.id} className="border border-slate-800 rounded-2xl p-4 bg-slate-900/30 space-y-4">
-              <div className="grid lg:grid-cols-[160px_minmax(0,1fr)] gap-4 items-start">
-                <div>
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500 mb-1">Luz {index + 1}</p>
-                  <label className="label">Luz libre (m)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    lang="en"
-                    inputMode="decimal"
-                    className="input input-compact input-short"
-                    {...register(`span_geometries.${index}.clear_span_between_supports_m`, { valueAsNumber: true })}
-                  />
-                  {errors.span_geometries?.[index]?.clear_span_between_supports_m && (
-                    <p className="text-rose-400 text-xs mt-1">
-                      {errors.span_geometries[index].clear_span_between_supports_m.message}
+          {spanGeometryFields.map((field, index) => {
+            const currentHeight = Number(field?.section_height_cm);
+            const effectiveDepth = Number.isFinite(currentHeight) ? Math.max(currentHeight - 6, 0) : null;
+
+            return (
+              <div key={field.id} className="border border-slate-800 rounded-2xl p-4 bg-slate-900/30 space-y-4">
+                <div className="grid lg:grid-cols-[160px_minmax(0,1fr)] gap-4 items-start">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500 mb-1">Luz {index + 1}</p>
+                    <label className="label">Luz libre (m)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      lang="en"
+                      inputMode="decimal"
+                      className="input input-compact input-short"
+                      {...register(`span_geometries.${index}.clear_span_between_supports_m`, { valueAsNumber: true })}
+                    />
+                    {errors.span_geometries?.[index]?.clear_span_between_supports_m && (
+                      <p className="text-rose-400 text-xs mt-1">
+                        {errors.span_geometries[index].clear_span_between_supports_m.message}
+                      </p>
+                    )}
+                    <p className="text-xs text-slate-500 mt-1">
+                      Peralte efectivo ≈ {effectiveDepth !== null ? `${effectiveDepth.toFixed(0)} cm` : '—'}
                     </p>
-                  )}
-                </div>
-                <div>
-                  <label className="label">Sección</label>
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 mb-2">Base (cm)</p>
-                      <input
-                        type="number"
-                        step={5}
-                        min={5}
-                        className="input"
-                        placeholder="30"
-                        {...register(`span_geometries.${index}.section_base_cm`, { valueAsNumber: true })}
-                      />
-                      {errors.span_geometries?.[index]?.section_base_cm && (
-                        <p className="text-rose-400 text-xs mt-1">
-                          {errors.span_geometries[index].section_base_cm.message}
-                        </p>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 mb-2">Altura (cm)</p>
-                      <input
-                        type="number"
-                        step={5}
-                        min={5}
-                        className="input"
-                        placeholder="45"
-                        {...register(`span_geometries.${index}.section_height_cm`, { valueAsNumber: true })}
-                      />
-                      {errors.span_geometries?.[index]?.section_height_cm && (
-                        <p className="text-rose-400 text-xs mt-1">
-                          {errors.span_geometries[index].section_height_cm.message}
-                        </p>
-                      )}
+                  </div>
+                  <div>
+                    <label className="label">Sección</label>
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 mb-2">Base (cm)</p>
+                        <input
+                          type="number"
+                          step={5}
+                          min={5}
+                          className="input"
+                          placeholder="30"
+                          {...register(`span_geometries.${index}.section_base_cm`, { valueAsNumber: true })}
+                        />
+                        {errors.span_geometries?.[index]?.section_base_cm && (
+                          <p className="text-rose-400 text-xs mt-1">
+                            {errors.span_geometries[index].section_base_cm.message}
+                          </p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 mb-2">Altura (cm)</p>
+                        <input
+                          type="number"
+                          step={5}
+                          min={5}
+                          className="input"
+                          placeholder="45"
+                          {...register(`span_geometries.${index}.section_height_cm`, { valueAsNumber: true })}
+                        />
+                        {errors.span_geometries?.[index]?.section_height_cm && (
+                          <p className="text-rose-400 text-xs mt-1">
+                            {errors.span_geometries[index].section_height_cm.message}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
