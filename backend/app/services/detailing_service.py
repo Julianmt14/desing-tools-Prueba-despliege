@@ -13,6 +13,34 @@ from app.schemas.tools.despiece import (
 )
 
 logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("[%(asctime)s] %(levelname)s %(name)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+logger.propagate = False
+
+
+class DetailingDebugger:
+    """Pequeño ayudante para exponer el avance del cálculo en los logs."""
+
+    def __init__(self, name: str = "detailing") -> None:
+        self.step = 0
+        self.name = name.upper()
+
+    def log(self, message: str, **context: Any) -> None:
+        self.step += 1
+        context_str = " ".join(
+            f"{key}={value}" for key, value in context.items() if value is not None
+        )
+        if context_str:
+            logger.info("%s[%02d] %s | %s", self.name, self.step, message, context_str)
+        else:
+            logger.info("%s[%02d] %s", self.name, self.step, message)
+
+    def error(self, message: str) -> None:
+        logger.error("%s[ERR] %s", self.name, message)
 
 class BeamDetailingService:
     """Servicio para cálculo de despiece automático según NSR-10"""
@@ -23,6 +51,22 @@ class BeamDetailingService:
             'DES': 1.3,  # Alta disipación - Empalmes Clase B
             'DMO': 1.0,  # Disipación moderada
             'DMI': 1.0   # Disipación mínima
+        }
+
+        self.min_edge_cover_m = 0.05  # 5 cm mínimo en extremos
+        self.hook_length_table = {
+            '#2': {'90': 0.10, '180': 0.080, '135': 0.075},
+            '#3': {'90': 0.15, '180': 0.130, '135': 0.095},
+            '#4': {'90': 0.20, '180': 0.150, '135': 0.127},
+            '#5': {'90': 0.25, '180': 0.180, '135': 0.159},
+            '#6': {'90': 0.30, '180': 0.210, '135': 0.191},
+            '#7': {'90': 0.36, '180': 0.250, '135': 0.222},
+            '#8': {'90': 0.41, '180': 0.300, '135': 0.254},
+            '#9': {'90': 0.49, '180': 0.340, '135': None},
+            '#10': {'90': 0.54, '180': 0.400, '135': None},
+            '#11': {'90': 0.59, '180': 0.430, '135': None},
+            '#14': {'90': 0.80, '180': 0.445, '135': None},
+            '#18': {'90': 1.03, '180': 0.572, '135': None},
         }
         
         # Pesos por metro lineal según diámetro (kg/m) - NSR-10 Anexo C
@@ -47,6 +91,13 @@ class BeamDetailingService:
             '28 MPa (4000 psi)': 0.85,
             '32 MPa (4600 psi)': 0.80
         }
+
+        self.fc_column_map = {
+            '21 MPa (3000 psi)': 'fc_21_mpa_m',
+            '24 MPa (3500 psi)': 'fc_24_mpa_m',
+            '28 MPa (4000 psi)': 'fc_28_mpa_m',
+            '32 MPa (4600 psi)': 'fc_28_mpa_m',
+        }
         
         # Factores para diferentes grados de acero
         self.fy_factors = {
@@ -65,6 +116,12 @@ class BeamDetailingService:
             DetailingResponse con los resultados del cálculo
         """
         start_time = datetime.now()
+        debugger = DetailingDebugger()
+        debugger.log(
+            "Inicio de cálculo",
+            spans=len(data.get('span_geometries', []) or []),
+            supports=len(data.get('axis_supports', []) or []),
+        )
         
         try:
             logger.info("Iniciando cálculo de despiece NSR-10")
@@ -72,44 +129,89 @@ class BeamDetailingService:
             # 1. Validar y preprocesar datos
             beam_data = self._preprocess_data(data)
             if not beam_data:
+                debugger.error("Datos de entrada inválidos")
                 return DetailingResponse(
                     success=False,
+                    results=None,
+                    computation_time_ms=None,
                     message="Datos de entrada inválidos"
                 )
+            debugger.log(
+                "Datos preprocesados",
+                top_bars=len(beam_data.get('top_bars', [])),
+                bottom_bars=len(beam_data.get('bottom_bars', [])),
+            )
             
             # 2. Calcular geometría de la viga
             coordinates = self._calculate_coordinates(beam_data)
+            debugger.log(
+                "Geometría calculada",
+                total_length=f"{coordinates.get('total_length', 0):.2f}m",
+                spans=len(coordinates.get('spans', [])),
+            )
             
             # 3. Identificar barras continuas obligatorias (NSR-10 C.21.5.2.1)
             continuous_bars = self._identify_continuous_bars(beam_data)
+            debugger.log(
+                "Barras continuas identificadas",
+                top=continuous_bars['top']['total_continuous'],
+                bottom=continuous_bars['bottom']['total_continuous'],
+            )
             
             # 4. Calcular zonas prohibidas para empalmes (NSR-10 C.21.5.3.2)
             prohibited_zones = self._calculate_prohibited_zones(coordinates, beam_data)
+            debugger.log("Zonas prohibidas calculadas", zonas=len(prohibited_zones))
             
             # 5. Calcular longitud de desarrollo ajustada
             development_lengths = self._calculate_development_lengths(beam_data)
+            debugger.log("Longitudes de desarrollo evaluadas")
             
             # 6. Generar detalle de barras superiores
             top_bars = self._detail_top_bars(
                 beam_data, coordinates, prohibited_zones, 
                 continuous_bars, development_lengths
             )
+            debugger.log("Detalle barras superiores", barras=len(top_bars))
             
             # 7. Generar detalle de barras inferiores
             bottom_bars = self._detail_bottom_bars(
                 beam_data, coordinates, prohibited_zones,
                 continuous_bars, development_lengths
             )
+            debugger.log("Detalle barras inferiores", barras=len(bottom_bars))
             
             # 8. Aplicar refuerzo de segmentos específicos
             if beam_data.get('segment_reinforcements'):
                 self._apply_segment_reinforcement(
                     beam_data, top_bars, bottom_bars, coordinates
                 )
+                debugger.log(
+                    "Refuerzo segmentado aplicado",
+                    segmentos=len(beam_data.get('segment_reinforcements', [])),
+                )
+
+            edge_cover = beam_data.get('edge_cover_m', self.min_edge_cover_m)
+            max_bar_length = beam_data.get('max_bar_length_m', 12.0)
+            self._apply_cover_and_hook_adjustments(
+                top_bars,
+                coordinates['total_length'],
+                edge_cover,
+                max_bar_length,
+            )
+            self._apply_cover_and_hook_adjustments(
+                bottom_bars,
+                coordinates['total_length'],
+                edge_cover,
+                max_bar_length,
+            )
             
             # 9. Optimizar cortes y generar lista de materiales
             material_list = self._generate_material_list(
                 top_bars + bottom_bars, beam_data
+            )
+            debugger.log(
+                "Lista de materiales generada",
+                items=len(material_list),
             )
             
             # 10. Validaciones NSR-10
@@ -117,6 +219,7 @@ class BeamDetailingService:
                 beam_data, top_bars, bottom_bars, 
                 prohibited_zones, continuous_bars
             )
+            debugger.log("Validaciones NSR-10 completadas", advertencias=len(warnings))
             
             # 11. Calcular métricas generales
             total_weight = sum(item.weight_kg for item in material_list)
@@ -137,6 +240,11 @@ class BeamDetailingService:
             
             computation_time = (datetime.now() - start_time).total_seconds() * 1000
             logger.info(f"Cálculo completado en {computation_time:.2f}ms")
+            debugger.log(
+                "Cálculo finalizado",
+                tiempo_ms=f"{computation_time:.2f}",
+                peso_total=f"{total_weight:.2f}kg",
+            )
             
             return DetailingResponse(
                 success=True,
@@ -147,8 +255,11 @@ class BeamDetailingService:
             
         except Exception as e:
             logger.error(f"Error en cálculo de despiece: {str(e)}", exc_info=True)
+            debugger.error(f"Excepción: {str(e)}")
             return DetailingResponse(
                 success=False,
+                results=None,
+                computation_time_ms=None,
                 message=f"Error en cálculo: {str(e)}"
             )
     
@@ -188,6 +299,9 @@ class BeamDetailingService:
                 processed['effective_depth_m'] = max(0.3, (avg_height - 6) / 100)  # Restar recubrimiento
             else:
                 processed['effective_depth_m'] = 0.45  # Valor por defecto
+
+            cover_cm = processed.get('cover_cm', 5) or 5
+            processed['edge_cover_m'] = max(self.min_edge_cover_m, cover_cm / 100)
             
             return processed
             
@@ -371,6 +485,8 @@ class BeamDetailingService:
         fc_factor = self.fc_factors.get(concrete_strength, 1.0)
         fy_factor = self.fy_factors.get(reinforcement, 1.0)
         energy_factor = self.energy_factors.get(beam_data.get('energy_dissipation_class', 'DES'), 1.0)
+        lap_lookup = beam_data.get('lap_splice_lookup') or {}
+        fc_column = self.fc_column_map.get(concrete_strength)
         
         for diameter, base_length in self.base_development_lengths.items():
             # Longitud básica ajustada por f'c y fy
@@ -378,6 +494,10 @@ class BeamDetailingService:
             
             # Para empalmes clase B en zonas sísmicas
             splice_length = adjusted_length * energy_factor
+            if fc_column and diameter in lap_lookup:
+                lap_value = lap_lookup[diameter].get(fc_column)
+                if lap_value:
+                    splice_length = float(lap_value)
             
             development_lengths[diameter] = {
                 'development': adjusted_length,
@@ -431,7 +551,13 @@ class BeamDetailingService:
                     development_length_m=dev_info['development'],
                     notes="Barra continua - NSR-10 C.21.5.2.1"
                 )
-                bars.append(bar)
+                segments = self._split_bar_by_max_length(
+                    bar,
+                    max_length=max_length,
+                    splice_length=dev_info['splice'],
+                    prohibited_zones=prohibited_zones,
+                )
+                bars.extend(segments)
             
             # Barras restantes (de apoyo)
             remaining_count = total_count - continuous_count
@@ -494,7 +620,13 @@ class BeamDetailingService:
                     development_length_m=dev_info['development'],
                     notes="Barra continua - NSR-10 C.21.5.2.1"
                 )
-                bars.append(bar)
+                segments = self._split_bar_by_max_length(
+                    bar,
+                    max_length=max_length,
+                    splice_length=dev_info['splice'],
+                    prohibited_zones=prohibited_zones,
+                )
+                bars.extend(segments)
             
             # Barras restantes
             remaining_count = total_count - continuous_count
@@ -574,6 +706,108 @@ class BeamDetailingService:
                     })
         
         return splices if splices else None
+
+    def _split_bar_by_max_length(
+        self,
+        bar: RebarDetail,
+        *,
+        max_length: float,
+        splice_length: float,
+        prohibited_zones: List[ProhibitedZone],
+    ) -> List[RebarDetail]:
+        """Segmenta una barra en piezas que respetan la longitud comercial máxima."""
+        if max_length <= 0 or bar.length_m <= max_length:
+            return [bar]
+
+        if splice_length <= 0 or splice_length >= max_length:
+            logger.warning(
+                "No se puede segmentar la barra %s porque splice %.2f >= Lmax %.2f",
+                bar.id,
+                splice_length,
+                max_length,
+            )
+            return [bar]
+
+        segments: List[RebarDetail] = []
+        joints: List[Dict[str, Any]] = []
+        current_start = bar.start_m
+        piece_index = 1
+        safety_counter = 0
+
+        while current_start < bar.end_m - 1e-6 and safety_counter < 100:
+            safety_counter += 1
+            segment_end = min(current_start + max_length, bar.end_m)
+            length = segment_end - current_start
+            if length <= 0:
+                break
+
+            base_note = (bar.notes or "").strip()
+            segment_note = f"{base_note} | Segmento {piece_index}" if base_note else f"Segmento {piece_index}"
+
+            segment = RebarDetail(
+                id=f"{bar.id}-S{piece_index:02d}",
+                diameter=bar.diameter,
+                position=bar.position,
+                type=bar.type,
+                length_m=length,
+                start_m=current_start,
+                end_m=segment_end,
+                hook_type=bar.hook_type,
+                splices=None,
+                quantity=bar.quantity,
+                development_length_m=bar.development_length_m,
+                notes=segment_note,
+            )
+            segments.append(segment)
+
+            if segment_end >= bar.end_m - 1e-6:
+                break
+
+            joint_start = max(bar.start_m, segment_end - splice_length)
+            joint_end = segment_end
+
+            if self._overlaps_prohibited_zone(joint_start, joint_end, prohibited_zones):
+                logger.warning(
+                    "Empalme de barra %s (%.2f-%.2f m) cae en zona prohibida; revise la geometría",
+                    bar.id,
+                    joint_start,
+                    joint_end,
+                )
+
+            joints.append(
+                {
+                    "start": joint_start,
+                    "end": joint_end,
+                    "length": joint_end - joint_start,
+                    "type": "lap_splice_class_b",
+                }
+            )
+
+            current_start = joint_start
+            piece_index += 1
+
+        if safety_counter >= 100:
+            logger.warning("Se alcanzó el límite de segmentación para la barra %s", bar.id)
+
+        if not segments:
+            return [bar]
+
+        for idx, segment in enumerate(segments):
+            segment_splices: List[Dict[str, Any]] = []
+            if idx > 0:
+                segment_splices.append(joints[idx - 1])
+            if idx < len(joints):
+                segment_splices.append(joints[idx])
+            segment.splices = segment_splices or None
+
+        return segments
+
+    @staticmethod
+    def _overlaps_prohibited_zone(start: float, end: float, zones: List[ProhibitedZone]) -> bool:
+        for zone in zones:
+            if max(start, zone.start_m) < min(end, zone.end_m):
+                return True
+        return False
     
     def _distribute_support_bars(self, diameter: str, count: int, coordinates: Dict,
                                 position: str, hook_type: str, 
@@ -611,6 +845,7 @@ class BeamDetailingService:
                 start_m=start,
                 end_m=end,
                 hook_type=hook_type,
+                splices=None,
                 quantity=1,
                 development_length_m=development_length,
                 notes=notes
@@ -645,6 +880,7 @@ class BeamDetailingService:
                     start_m=0,
                     end_m=bar_length,
                     hook_type=hook_type,
+                    splices=None,
                     quantity=1,
                     development_length_m=development_length,
                     notes="Entra al apoyo (≥ Ld)"
@@ -695,6 +931,7 @@ class BeamDetailingService:
                 start_m=start,
                 end_m=start + bar_length,
                 hook_type=hook_type,
+                splices=None,
                 quantity=1,
                 development_length_m=development_length,
                 notes="Centro de luz"
@@ -753,11 +990,75 @@ class BeamDetailingService:
                         start_m=start,
                         end_m=start + bar_length,
                         hook_type='135',
+                        splices=None,
                         quantity=1,
                         development_length_m=self.base_development_lengths.get(diameter, 0.6),
                         notes=f"Refuerzo segmento {span_idx+1}"
                     )
                     bars_list.append(bar)
+
+    def _get_single_hook_length(self, diameter: str, hook_type: Optional[str]) -> float:
+        if not hook_type:
+            return 0.0
+        hook_lengths = self.hook_length_table.get(diameter)
+        if not hook_lengths:
+            return 0.0
+        length = hook_lengths.get(hook_type)
+        if not length:
+            return 0.0
+        return float(length)
+
+    def _apply_cover_and_hook_adjustments(
+        self,
+        bars: List[RebarDetail],
+        total_length: float,
+        edge_cover: float,
+        max_bar_length: float,
+    ) -> None:
+        if not bars:
+            return
+
+        cover = max(self.min_edge_cover_m, edge_cover or 0.0)
+        max_end = max(total_length - cover, cover)
+        tolerance = 1e-3
+        max_length = max(max_bar_length or 0.0, 0.0)
+
+        for bar in bars:
+            original_start = bar.start_m
+            original_end = bar.end_m
+
+            start = max(cover, min(original_start, max_end))
+            end = max(cover, min(original_end, max_end))
+            if end < start:
+                start, end = end, start
+
+            bar.start_m = start
+            bar.end_m = end
+            straight_length = max(end - start, 0.0)
+
+            hook_length = self._get_single_hook_length(bar.diameter, bar.hook_type)
+            start_hook = hook_length if hook_length and original_start <= cover + tolerance else 0.0
+            end_hook = hook_length if hook_length and original_end >= total_length - cover - tolerance else 0.0
+            total_with_hooks = straight_length + start_hook + end_hook
+
+            if max_length > 0 and total_with_hooks > max_length + tolerance:
+                # Trim the straight portion so hooks do not push the bar beyond stock limits
+                allowed_straight = max(max_length - (start_hook + end_hook), 0.0)
+                if allowed_straight + tolerance < straight_length:
+                    bar.end_m = bar.start_m + allowed_straight
+                    straight_length = max(bar.end_m - bar.start_m, 0.0)
+                    total_with_hooks = straight_length + start_hook + end_hook
+
+                if total_with_hooks > max_length + tolerance:
+                    logger.warning(
+                        "La barra %s requiere %.2fm (incluyendo ganchos) y excede la longitud máxima %.2fm",
+                        bar.id,
+                        total_with_hooks,
+                        max_length,
+                    )
+                    total_with_hooks = max_length
+
+            bar.length_m = total_with_hooks
     
     def _generate_material_list(self, all_bars: List[RebarDetail], 
                                beam_data: Dict) -> List[MaterialItem]:
@@ -839,7 +1140,7 @@ class BeamDetailingService:
             
             if current_cuts:
                 waste = max_length - sum(current_cuts)
-                efficiency = (sum(current_cuts) / max_length) * 100
+                efficiency = (sum(current_cuts) / max_length) * 100 if max_length > 0 else 0
                 
                 cuts.append({
                     'commercial_length': max_length,
@@ -848,6 +1149,18 @@ class BeamDetailingService:
                     'waste_m': waste,
                     'efficiency': efficiency
                 })
+                continue
+
+            # Si ninguna barra cabe en la longitud comercial disponible,
+            # registrar la barra más larga como pieza individual para evitar bucles infinitos.
+            long_bar = remaining.pop(0)
+            cuts.append({
+                'commercial_length': max(long_bar, max_length),
+                'cut_lengths': [long_bar],
+                'num_bars': 1,
+                'waste_m': max(max_length - long_bar, 0),
+                'efficiency': 100 if long_bar >= max_length else (long_bar / max_length) * 100
+            })
         
         return cuts
     

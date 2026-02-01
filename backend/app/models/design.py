@@ -80,7 +80,7 @@ class DespieceViga(Base):
     # Parámetros de diseño
     max_rebar_length_m = Column(String(10), nullable=False)
     lap_splice_length_min_m = Column(Float, nullable=False)
-    lap_splice_location = Column(String(255), nullable=False)
+    lap_splice_location = Column(String(255), nullable=False, default="Calculado automáticamente")
     hook_type = Column(String(20), nullable=False)
     cover_cm = Column(Integer, nullable=False, default=4)
 

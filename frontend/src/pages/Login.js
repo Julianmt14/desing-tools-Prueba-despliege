@@ -1,5 +1,4 @@
 import React from 'react';
-import axios from 'axios';
 import {
   Box,
   Card,
@@ -27,6 +26,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import apiClient from '../utils/apiClient';
 
 const loginSchema = z.object({
   identifier: z.string().min(1, 'Ingresa tu usuario o correo'),
@@ -57,16 +57,18 @@ const Login = ({ onLogin }) => {
       formData.append('username', data.identifier.trim());
       formData.append('password', data.password);
 
-      const response = await axios.post('/api/v1/auth/login', formData, {
+      const response = await apiClient.post('/api/v1/auth/login', formData, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        skipAuth: true,
       });
 
       const token = response.data?.access_token;
+      const refreshToken = response.data?.refresh_token;
       if (!token) {
         throw new Error('No se recibió el token de acceso.');
       }
 
-      onLogin(token);
+      onLogin(token, refreshToken);
       toast.success('¡Bienvenido de nuevo!');
       navigate('/');
     } catch (error) {

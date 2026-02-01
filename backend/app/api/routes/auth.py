@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.schemas.user import UserCreate, UserRead
-from app.schemas.auth import Token
+from app.schemas.auth import Token, TokenRefreshRequest
 from app.services import auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -26,5 +26,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     user = auth_service.authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas")
-    token = auth_service.create_access_token_for_user(user)
-    return Token(access_token=token)
+    access_token, refresh_token = auth_service.create_tokens_for_user(user)
+    return Token(access_token=access_token, refresh_token=refresh_token)
+
+
+@router.post("/refresh", response_model=Token)
+def refresh_access_token(*, payload: TokenRefreshRequest, db: Session = Depends(deps.get_db_session)):
+    access_token, refresh_token = auth_service.refresh_tokens(db, payload.refresh_token)
+    return Token(access_token=access_token, refresh_token=refresh_token)

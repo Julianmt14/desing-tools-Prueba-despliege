@@ -4,7 +4,13 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.security import verify_password, get_password_hash, create_access_token
+from app.core.security import (
+    verify_password,
+    get_password_hash,
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+)
 from app import models
 
 MAX_PASSWORD_BYTES = 72
@@ -59,5 +65,18 @@ def create_user(db: Session, *, username: str, email: str, password: str) -> mod
     return user
 
 
-def create_access_token_for_user(user: models.User) -> str:
-    return create_access_token(subject=cast(str, user.username))
+def create_tokens_for_user(user: models.User) -> tuple[str, str]:
+    username = cast(str, user.username)
+    access = create_access_token(subject=username)
+    refresh = create_refresh_token(subject=username)
+    return access, refresh
+
+
+def refresh_tokens(db: Session, refresh_token: str) -> tuple[str, str]:
+    username = decode_refresh_token(refresh_token)
+    if username is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de refresco inválido")
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
+    return create_tokens_for_user(user)

@@ -23,17 +23,35 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def create_access_token(subject: str, expires_minutes: int | None = None) -> str:
-    expire = datetime.utcnow() + timedelta(
-        minutes=expires_minutes or settings.access_token_expire_minutes
-    )
-    to_encode = {"exp": expire, "sub": subject}
+def _create_token(subject: str, expires_minutes: int, token_type: str) -> str:
+    expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
+    to_encode = {"exp": expire, "sub": subject, "type": token_type}
     return jwt.encode(to_encode, settings.secret_key, algorithm="HS256")
 
 
-def decode_access_token(token: str) -> str | None:
+def create_access_token(subject: str, expires_minutes: int | None = None) -> str:
+    minutes = expires_minutes or settings.access_token_expire_minutes
+    return _create_token(subject, minutes, "access")
+
+
+def create_refresh_token(subject: str, expires_minutes: int | None = None) -> str:
+    minutes = expires_minutes or settings.refresh_token_expire_minutes
+    return _create_token(subject, minutes, "refresh")
+
+
+def _decode_token(token: str, expected_type: str) -> str | None:
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        if payload.get("type") != expected_type:
+            return None
         return payload.get("sub")
     except JWTError:
         return None
+
+
+def decode_access_token(token: str) -> str | None:
+    return _decode_token(token, "access")
+
+
+def decode_refresh_token(token: str) -> str | None:
+    return _decode_token(token, "refresh")

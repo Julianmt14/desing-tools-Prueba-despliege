@@ -43,7 +43,7 @@ class DespieceVigaBase(BaseModel):
     bottom_bar_diameters: Optional[List[str]] = None
     max_rebar_length_m: str = "12m"
     lap_splice_length_min_m: float = 0.75
-    lap_splice_location: str
+    lap_splice_location: str = "Calculado automáticamente"
     beam_total_length_m: float = 0
     section_changes: Optional[List[Dict[str, Any]]] = None
     has_cantilevers: bool = False

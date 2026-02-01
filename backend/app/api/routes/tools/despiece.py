@@ -19,7 +19,7 @@ from app.schemas.design import (
     DespieceVigaRead,
     DespieceVigaUpdate,
 )
-from app.services import design_service
+from app.services import design_service, rebar_service
 from app.services.detailing_service import BeamDetailingService
 from app import models
 
@@ -32,6 +32,87 @@ logger = logging.getLogger(__name__)
 class BarConfig(TypedDict):
     diameter: str
     quantity: int
+
+
+FC_COLUMN_MAP = {
+    "21 MPa (3000 psi)": "fc_21_mpa_m",
+    "24 MPa (3500 psi)": "fc_24_mpa_m",
+    "28 MPa (4000 psi)": "fc_28_mpa_m",
+    "32 MPa (4600 psi)": "fc_28_mpa_m",
+}
+
+DEFAULT_LAP_SPLICE = 0.75
+DEFAULT_LAP_LOCATION = "Calculado automáticamente"
+
+
+def _normalize_mark(bar_mark: str) -> str:
+    mark = (bar_mark or "").strip()
+    return mark if mark.startswith("#") else f"#{mark}"
+
+
+def _build_lap_splice_lookup(db: Session) -> Dict[str, Dict[str, float]]:
+    records = rebar_service.list_lap_splice_lengths(db)
+    lookup: Dict[str, Dict[str, float]] = {}
+    for record in records:
+        mark = _normalize_mark(str(getattr(record, "bar_mark", "")))
+        if not mark:
+            continue
+        lookup[mark] = {
+            "fc_21_mpa_m": float(getattr(record, "fc_21_mpa_m", DEFAULT_LAP_SPLICE)),
+            "fc_24_mpa_m": float(getattr(record, "fc_24_mpa_m", DEFAULT_LAP_SPLICE)),
+            "fc_28_mpa_m": float(getattr(record, "fc_28_mpa_m", DEFAULT_LAP_SPLICE)),
+        }
+    return lookup
+
+
+def _collect_diameters(payload_data: Dict[str, Any]) -> set[str]:
+    diameters: set[str] = set()
+    for field in ("top_bars_config", "bottom_bars_config"):
+        for group in payload_data.get(field) or []:
+            diameter = _normalize_mark(group.get("diameter", ""))
+            if len(diameter) > 1:
+                diameters.add(diameter)
+
+    for field in ("top_bar_diameters", "bottom_bar_diameters"):
+        for diameter in payload_data.get(field) or []:
+            normalized = _normalize_mark(diameter)
+            if len(normalized) > 1:
+                diameters.add(normalized)
+
+    return diameters
+
+
+def _calculate_lap_splice_length(payload_data: Dict[str, Any], lookup: Dict[str, Dict[str, float]]) -> float:
+    if not lookup:
+        return DEFAULT_LAP_SPLICE
+
+    fc_key = FC_COLUMN_MAP.get(payload_data.get("concrete_strength", ""))
+    if not fc_key:
+        return DEFAULT_LAP_SPLICE
+
+    diameters = _collect_diameters(payload_data)
+    if not diameters:
+        return DEFAULT_LAP_SPLICE
+
+    lengths: List[float] = []
+    for diameter in diameters:
+        values = lookup.get(diameter)
+        if values is None:
+            continue
+        length = values.get(fc_key)
+        if length is None:
+            continue
+        lengths.append(float(length))
+
+    return max(lengths) if lengths else DEFAULT_LAP_SPLICE
+
+
+def _inject_lap_splice_metadata(payload: Dict[str, Any], lookup: Dict[str, Dict[str, float]]) -> Dict[str, Any]:
+    enriched = payload.copy()
+    enriched["lap_splice_length_min_m"] = _calculate_lap_splice_length(enriched, lookup)
+    if not enriched.get("lap_splice_location"):
+        enriched["lap_splice_location"] = DEFAULT_LAP_LOCATION
+    return enriched
 
 
 @router.get("/presets", response_model=BeamPresetResponse)
@@ -51,12 +132,16 @@ def compute_beam_detailing(
     *,
     request: DetailingRequest,
     background_tasks: BackgroundTasks,
+    db: Session = Depends(deps.get_db_session),
     current_user: models.User = Depends(deps.get_current_user),
 ):
     try:
         user_id = _get_user_id(current_user)
         logger.info("Calculando despiece para usuario %s", user_id)
-        request_data = request.model_dump(exclude_none=True)
+        lap_lookup = _build_lap_splice_lookup(db)
+        base_request = request.model_dump(exclude_none=True)
+        request_data = _inject_lap_splice_metadata(base_request, lap_lookup)
+        request_data["lap_splice_lookup"] = lap_lookup
         response = detailing_service.compute_detailing(request_data)
 
         if response.success:
@@ -120,6 +205,10 @@ def compute_detailing_for_design(
             "reinforcement": despiece.reinforcement,
             "lap_splice_length_min_m": despiece.lap_splice_length_min_m,
         }
+
+        lap_lookup = _build_lap_splice_lookup(db)
+        request_data = _inject_lap_splice_metadata(request_data, lap_lookup)
+        request_data["lap_splice_lookup"] = lap_lookup
 
         response = detailing_service.compute_detailing(request_data)
 
@@ -234,6 +323,10 @@ def create_beam_design(
     current_user: models.User = Depends(deps.get_current_user),
 ):
     user_id = _get_user_id(current_user)
+    lap_lookup = _build_lap_splice_lookup(db)
+    payload_data = payload.model_dump()
+    enriched_payload = _inject_lap_splice_metadata(payload_data, lap_lookup)
+    payload = BeamDetailPayload.model_validate(enriched_payload)
     despiece_fields = set(DespieceVigaCreate.model_fields.keys())
     despiece_payload = DespieceVigaCreate(**payload.model_dump(include=despiece_fields))
     settings_data = payload.model_dump(exclude=despiece_fields)

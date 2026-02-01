@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -15,6 +14,8 @@ import {
   validateNSR10,
 } from '../utils/nsr10Constants';
 import { useBeamDetailing, extractBeamData } from '../hooks/useBeamDetailing';
+import apiClient from '../utils/apiClient';
+import { getAccessToken, getRefreshToken } from '../utils/auth';
 import BeamDetailingView from './DesignStudioSections/BeamDetailingView';
 
 
@@ -23,6 +24,12 @@ const lengthOptions = MAX_BAR_LENGTH_OPTIONS;
 const diameterOptions = getDiameterOptions();
 const DEFAULT_ENERGY_CLASS = 'DES';
 const defaultHookOptions = getHookOptionsForClass(DEFAULT_ENERGY_CLASS);
+const LAP_SPLICE_FC_MAP = {
+  '21 MPa (3000 psi)': 'fc_21_mpa_m',
+  '24 MPa (3500 psi)': 'fc_24_mpa_m',
+  '28 MPa (4000 psi)': 'fc_28_mpa_m',
+  '32 MPa (4600 psi)': 'fc_28_mpa_m',
+};
 const barGroupSchema = z.object({
   quantity: z.coerce.number().int().min(1, 'Cantidad mínima 1'),
   diameter: z.enum(diameterOptions),
@@ -114,8 +121,6 @@ const formSchema = z.object({
   top_bars_config: z.array(barGroupSchema).min(1, 'Agrega al menos un grupo de barras superiores'),
   bottom_bars_config: z.array(barGroupSchema).min(1, 'Agrega al menos un grupo de barras inferiores'),
   max_rebar_length_m: z.enum(lengthOptions),
-  lap_splice_length_min_m: z.coerce.number().positive('Longitud inválida'),
-  lap_splice_location: z.string().min(1, 'Describe la ubicación'),
   beam_total_length_m: z.coerce.number().nonnegative('Longitud total inválida'),
   has_initial_cantilever: z.boolean(),
   has_final_cantilever: z.boolean(),
@@ -180,8 +185,6 @@ const defaultValues = {
   bottom_bars_config: [{ quantity: 2, diameter: '#5' }],
   segment_reinforcements: [],
   max_rebar_length_m: '9m',
-  lap_splice_length_min_m: 0.75,
-  lap_splice_location: 'Traslapo centrado a 1.50 m del apoyo A',
   has_initial_cantilever: false,
   has_final_cantilever: false,
   span_geometries: [
@@ -216,6 +219,8 @@ const DesignStudio = () => {
   const [hookOptions, setHookOptions] = useState(() => defaultHookOptions);
   const [showDetailing, setShowDetailing] = useState(false);
   const [detailingResults, setDetailingResults] = useState(null);
+  const [lapSpliceLookup, setLapSpliceLookup] = useState(null);
+  const [lapSpliceLoading, setLapSpliceLoading] = useState(false);
 
   const { isComputing: isDetailingComputing, error: detailingError, computeDetailing } = useBeamDetailing();
 
@@ -273,6 +278,7 @@ const DesignStudio = () => {
   const watchBottomBarGroups = watch('bottom_bars_config');
   const watchSegmentReinforcements = watch('segment_reinforcements');
   const watchBeamTotalLength = watch('beam_total_length_m');
+  const watchConcreteStrength = watch('concrete_strength');
   const nsrWarnings = useMemo(
     () => validateNSR10({ energy_dissipation_class: energyClass, hook_type: watchHookType }),
     [energyClass, watchHookType]
@@ -333,10 +339,7 @@ const DesignStudio = () => {
   );
   const segmentReinforcementsError =
     errors.segment_reinforcements?.root?.message || errors.segment_reinforcements?.message;
-  const beamTotalLength = useMemo(
-    () => calculateBeamTotalLength(watchSpanGeometries, watchAxisSupports),
-    [watchSpanGeometries, watchAxisSupports]
-  );
+  const beamTotalLength = calculateBeamTotalLength(watchSpanGeometries, watchAxisSupports);
   const spanOptions = useMemo(
     () =>
       (watchSpanGeometries || []).map((span, index) => {
@@ -448,6 +451,46 @@ const DesignStudio = () => {
   }, [register]);
 
   useEffect(() => {
+    let isMounted = true;
+    const fetchLapSpliceTable = async () => {
+      setLapSpliceLoading(true);
+      try {
+        const response = await apiClient.get('/api/v1/tools/rebar/lap-splice-lengths');
+        if (!isMounted) {
+          return;
+        }
+        const lookup = (response.data || []).reduce((acc, item) => {
+          const mark = item.bar_mark?.startsWith('#') ? item.bar_mark : `#${item.bar_mark || ''}`;
+          if (!mark || mark === '#') {
+            return acc;
+          }
+          acc[mark] = {
+            fc_21_mpa_m: Number(item.fc_21_mpa_m),
+            fc_24_mpa_m: Number(item.fc_24_mpa_m),
+            fc_28_mpa_m: Number(item.fc_28_mpa_m),
+          };
+          return acc;
+        }, {});
+        setLapSpliceLookup(lookup);
+      } catch (error) {
+        console.error('No se pudo cargar la tabla de traslapos', error);
+        if (isMounted) {
+          setLapSpliceLookup(null);
+        }
+      } finally {
+        if (isMounted) {
+          setLapSpliceLoading(false);
+        }
+      }
+    };
+
+    fetchLapSpliceTable();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!Number.isFinite(beamTotalLength)) {
       return;
     }
@@ -487,6 +530,52 @@ const DesignStudio = () => {
       cantileverLabel,
     };
   }, [watchSpanCount, watchInitialCantilever, watchFinalCantilever, beamTotalLength]);
+
+  const computedLapSpliceLength = useMemo(() => {
+    if (!lapSpliceLookup) {
+      return null;
+    }
+    const fcKey = LAP_SPLICE_FC_MAP[watchConcreteStrength] || 'fc_21_mpa_m';
+    const collectDiameters = (groups) => {
+      const result = new Set();
+      (groups || []).forEach((group) => {
+        if (!group?.diameter) {
+          return;
+        }
+        const mark = group.diameter.startsWith('#') ? group.diameter : `#${group.diameter}`;
+        result.add(mark);
+      });
+      return result;
+    };
+
+    const topDiameters = collectDiameters(watchTopBarGroups);
+    const bottomDiameters = collectDiameters(watchBottomBarGroups);
+    const uniqueDiameters = new Set([...topDiameters, ...bottomDiameters]);
+
+    if (uniqueDiameters.size === 0) {
+      return null;
+    }
+
+    const candidateLengths = Array.from(uniqueDiameters)
+      .map((mark) => lapSpliceLookup[mark]?.[fcKey])
+      .filter((value) => Number.isFinite(value));
+
+    if (candidateLengths.length === 0) {
+      return null;
+    }
+
+    return Number(Math.max(...candidateLengths).toFixed(2));
+  }, [lapSpliceLookup, watchConcreteStrength, watchTopBarGroups, watchBottomBarGroups]);
+
+  const lapSpliceChecklistLabel = useMemo(() => {
+    if (lapSpliceLoading) {
+      return 'calculando';
+    }
+    if (typeof computedLapSpliceLength === 'number') {
+      return `${computedLapSpliceLength.toFixed(2)} m`;
+    }
+    return '—';
+  }, [lapSpliceLoading, computedLapSpliceLength]);
 
   const handleLevelBlur = (event) => {
     const rawValue = event.target.value;
@@ -533,11 +622,6 @@ const DesignStudio = () => {
   const onSubmit = async (values) => {
     setIsSubmitting(true);
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) {
-        throw new Error('Tu sesión expiró, inicia sesión nuevamente.');
-      }
-
       const {
         axis_supports,
         span_geometries,
@@ -549,6 +633,8 @@ const DesignStudio = () => {
         segment_reinforcements,
         element_level,
         beam_total_length_m,
+        lap_splice_length_min_m: _legacyLapSpliceLength,
+        lap_splice_location: _legacyLapSpliceLocation,
         ...rest
       } = values;
 
@@ -628,11 +714,11 @@ const DesignStudio = () => {
         })),
       };
 
-      const response = await axios.post('/api/v1/tools/despiece/designs', payload, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      if (!getAccessToken() && !getRefreshToken()) {
+        throw new Error('Tu sesión expiró, inicia sesión nuevamente.');
+      }
+
+      const response = await apiClient.post('/api/v1/tools/despiece/designs', payload);
 
       setLastDesign(response.data);
       toast.success('Despiece guardado correctamente.');
@@ -728,6 +814,9 @@ const DesignStudio = () => {
               stirrupFields={stirrupFields}
               appendStirrup={appendStirrup}
               removeStirrup={removeStirrup}
+              lapSpliceLength={computedLapSpliceLength}
+              isLapSpliceLoading={lapSpliceLoading}
+              concreteStrength={watchConcreteStrength}
               onComputeDetailing={handleComputeDetailing}
               isDetailingComputing={isDetailingComputing}
               detailingError={detailingError}
@@ -856,7 +945,7 @@ const DesignStudio = () => {
             <ul className="space-y-2">
               <li className="flex items-center gap-2 text-slate-200">
                 <span className="material-symbols-outlined text-base text-emerald-300">check_circle</span>
-                Traslapos ≥ {watch('lap_splice_length_min_m')} m
+                Traslapos ≥ {lapSpliceChecklistLabel}
               </li>
               <li className="flex items-center gap-2 text-slate-200">
                 <span className="material-symbols-outlined text-base text-emerald-300">check_circle</span>

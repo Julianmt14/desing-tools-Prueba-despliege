@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     secret_key: str = "change-me"
     access_token_expire_minutes: int = 30
+    refresh_token_expire_minutes: int = 60 * 24 * 7  # 7 días
     cors_origins: list[str] = ["http://localhost:3001"]
     allowed_origins: Optional[list[str]] = None
 

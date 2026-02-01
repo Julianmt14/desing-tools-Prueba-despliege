@@ -12,6 +12,7 @@ import Register from './pages/Register';
 import DesignStudio from './pages/DesignStudio';
 import MyDesigns from './pages/MyDesigns';
 import NotFound from './pages/NotFound';
+import { getAccessToken, saveTokens, clearTokens } from './utils/auth';
 
 // Tema personalizado
 const theme = createTheme({
@@ -57,17 +58,16 @@ function App() {
 
   // Simular autenticación (en una app real, esto vendría de un contexto o estado global)
   React.useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    setIsAuthenticated(!!token);
+    setIsAuthenticated(!!getAccessToken());
   }, []);
 
-  const handleLogin = (token) => {
-    localStorage.setItem('access_token', token);
+  const handleLogin = (accessToken, refreshToken) => {
+    saveTokens(accessToken, refreshToken);
     setIsAuthenticated(true);
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('access_token');
+    clearTokens();
     setIsAuthenticated(false);
   };
 

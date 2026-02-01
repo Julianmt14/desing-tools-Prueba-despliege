@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
-import axios from 'axios';
-
+import apiClient from '../utils/apiClient';
+import { getAccessToken, getRefreshToken } from '../utils/auth';
 export const useBeamDetailing = () => {
   const [detailingResults, setDetailingResults] = useState(null);
   const [isComputing, setIsComputing] = useState(false);
@@ -11,8 +11,7 @@ export const useBeamDetailing = () => {
     setError(null);
     
     try {
-      const token = localStorage.getItem('access_token');
-      if (!token) {
+      if (!getAccessToken() && !getRefreshToken()) {
         throw new Error('No hay sesión activa');
       }
 
@@ -30,20 +29,10 @@ export const useBeamDetailing = () => {
         hook_type: beamData.hook_type || '135',
         energy_dissipation_class: beamData.energy_dissipation_class || 'DES',
         concrete_strength: beamData.concrete_strength || '21 MPa (3000 psi)',
-        reinforcement: beamData.reinforcement || '420 MPa (Grado 60)',
-        lap_splice_length_min_m: beamData.lap_splice_length_min_m || 0.75
+        reinforcement: beamData.reinforcement || '420 MPa (Grado 60)'
       };
 
-      const response = await axios.post(
-        '/api/v1/tools/despiece/compute-detailing',
-        detailingRequest,
-        {
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+      const response = await apiClient.post('/api/v1/tools/despiece/compute-detailing', detailingRequest);
 
       if (response.data.success) {
         setDetailingResults(response.data.results);
@@ -90,7 +79,6 @@ export const extractBeamData = (formValues) => {
     energy_dissipation_class: formValues.energy_dissipation_class || 'DES',
     concrete_strength: formValues.concrete_strength || '21 MPa (3000 psi)',
     reinforcement: formValues.reinforcement || '420 MPa (Grado 60)',
-    lap_splice_length_min_m: formValues.lap_splice_length_min_m || 0.75,
     element_level: formValues.element_level,
     beam_total_length_m: formValues.beam_total_length_m,
     project_name: formValues.project_name,

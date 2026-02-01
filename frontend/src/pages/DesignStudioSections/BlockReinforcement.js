@@ -30,6 +30,9 @@ const BlockReinforcement = ({
   stirrupFields,
   appendStirrup,
   removeStirrup,
+  lapSpliceLength,
+  isLapSpliceLoading,
+  concreteStrength,
   onComputeDetailing,
   isDetailingComputing = false,
   detailingError = null,
@@ -388,25 +391,19 @@ const BlockReinforcement = ({
       {segmentReinforcementsError && <p className="text-rose-400 text-xs">{segmentReinforcementsError}</p>}
     </div>
 
-    <div className="grid md:grid-cols-2 gap-6">
-      <div>
-        <label className="label">Longitud mínima de traslapo (m)</label>
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          lang="en"
-          inputMode="decimal"
-          className="input"
-          {...register('lap_splice_length_min_m', { valueAsNumber: true })}
-        />
-        {renderError('lap_splice_length_min_m')}
+    <div className="rounded-3xl border border-slate-800 bg-[#050b16]/40 p-5">
+      <p className="text-xs uppercase tracking-[0.3em] text-slate-400 mb-2">Traslapos automáticos NSR-10</p>
+      <div className="flex flex-wrap items-baseline gap-3">
+        <span className="text-3xl font-semibold text-white">
+          {isLapSpliceLoading ? '—' : typeof lapSpliceLength === 'number' ? `${lapSpliceLength.toFixed(2)} m` : '—'}
+        </span>
+        <span className="text-xs text-slate-400">
+          {concreteStrength ? `f'c ${concreteStrength}` : 'Selecciona f′c para estimar el traslapo'}
+        </span>
       </div>
-      <div>
-        <label className="label">Ubicación del traslapo</label>
-        <input className="input" {...register('lap_splice_location')} />
-        {renderError('lap_splice_location')}
-      </div>
+      <p className="text-xs text-slate-500 mt-2">
+        Valor máximo según la tabla oficial de traslapos para los diámetros activos y la resistencia del concreto.
+      </p>
     </div>
 
     <div className="bg-[#0b172f] rounded-3xl border border-slate-800 p-5 space-y-4">

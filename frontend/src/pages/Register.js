@@ -1,5 +1,4 @@
 import React from 'react';
-import axios from 'axios';
 import {
   Box,
   Card,
@@ -27,6 +26,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import apiClient from '../utils/apiClient';
 
 const MAX_PASSWORD_BYTES = 72;
 const textEncoder = new TextEncoder();
@@ -78,7 +78,7 @@ const Register = () => {
         password: data.password,
       };
 
-      await axios.post('/api/v1/auth/register', payload);
+      await apiClient.post('/api/v1/auth/register', payload, { skipAuth: true });
 
       toast.success('¡Cuenta creada exitosamente! Por favor, inicia sesión.');
       navigate('/login');
