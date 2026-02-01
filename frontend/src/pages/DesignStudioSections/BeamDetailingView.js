@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 
 const BeamDetailingView = ({ detailingResults, beamData }) => {
   if (!detailingResults) {
@@ -21,6 +21,56 @@ const BeamDetailingView = ({ detailingResults, beamData }) => {
   } = detailingResults;
 
   const allBars = [...top_bars, ...bottom_bars];
+
+  const groupedTopBars = useMemo(() => {
+    if (!top_bars?.length) return [];
+    const groups = new Map();
+    top_bars.forEach((bar) => {
+      const lengthKey = (bar.length_m ?? 0).toFixed(2);
+      const key = `${bar.diameter}|${bar.type}|${lengthKey}`;
+      const barQuantity = Number(bar.quantity) || 1;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          ...bar,
+          length_m: parseFloat(lengthKey),
+          quantity: barQuantity,
+          groupedIds: [bar.id],
+          displayId: bar.id,
+        });
+      } else {
+        const existing = groups.get(key);
+        existing.quantity += barQuantity;
+        existing.groupedIds.push(bar.id);
+      }
+    });
+    return Array.from(groups.values());
+  }, [top_bars]);
+
+  const groupedBottomBars = useMemo(() => {
+    if (!bottom_bars?.length) return [];
+    const groups = new Map();
+    bottom_bars.forEach((bar) => {
+      const lengthKey = (bar.length_m ?? 0).toFixed(2);
+      const key = `${bar.diameter}|${bar.type}|${lengthKey}`;
+      const barQuantity = Number(bar.quantity) || 1;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          ...bar,
+          length_m: parseFloat(lengthKey),
+          quantity: barQuantity,
+          groupedIds: [bar.id],
+          displayId: bar.id,
+        });
+      } else {
+        const existing = groups.get(key);
+        existing.quantity += barQuantity;
+        existing.groupedIds.push(bar.id);
+      }
+    });
+    return Array.from(groups.values());
+  }, [bottom_bars]);
+
+  const tableBars = [...groupedTopBars, ...groupedBottomBars];
 
   return (
     <div className="space-y-6">
@@ -228,9 +278,18 @@ const BeamDetailingView = ({ detailingResults, beamData }) => {
               </tr>
             </thead>
             <tbody>
-              {allBars.map((bar, idx) => (
+              {tableBars.map((bar, idx) => (
                 <tr key={idx} className="border-b border-slate-800/30 hover:bg-slate-800/20">
-                  <td className="py-2 px-2 font-mono text-xs">{bar.id}</td>
+                  <td className="py-2 px-2 text-xs">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-mono">{bar.displayId || bar.id}</span>
+                      {bar.groupedIds?.length > 1 && (
+                        <span className="text-[11px] text-slate-500">
+                          Agrupa {bar.groupedIds.length} barras
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="py-2 px-2">
                     <span className="px-2 py-1 bg-slate-700/50 rounded text-xs">
                       {bar.diameter}
