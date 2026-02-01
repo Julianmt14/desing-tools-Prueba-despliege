@@ -27,6 +27,7 @@ class DespieceVigaBase(BaseModel):
     max_rebar_length_m: str
     lap_splice_length_min_m: float = Field(..., gt=0)
     lap_splice_location: str
+    beam_total_length_m: float = Field(..., ge=0)
     section_changes: list[SpanGeometry] | None = None
     has_cantilevers: bool = False
     hook_type: str
@@ -59,6 +60,7 @@ class DespieceVigaUpdate(BaseModel):
     max_rebar_length_m: str | None = None
     lap_splice_length_min_m: float | None = Field(default=None, gt=0)
     lap_splice_location: str | None = None
+    beam_total_length_m: float | None = Field(default=None, ge=0)
     section_changes: list[SpanGeometry] | None = None
     has_cantilevers: bool | None = None
     hook_type: str | None = None

@@ -57,6 +57,7 @@ class DespieceViga(Base):
     max_rebar_length_m = Column(String(10), nullable=False)
     lap_splice_length_min_m = Column(Float, nullable=False)
     lap_splice_location = Column(String(255), nullable=False)
+    beam_total_length_m = Column(Float, nullable=False, default=0)
     section_changes = Column(JSON, nullable=True)
     has_cantilevers = Column(Boolean, nullable=False, default=False)
     hook_type = Column(String(20), nullable=False)

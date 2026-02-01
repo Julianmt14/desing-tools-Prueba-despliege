@@ -204,7 +204,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      <style jsx>{`
+      <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 
         .material-symbols-outlined {
@@ -221,7 +221,7 @@ const Dashboard = () => {
         }
       `}</style>
 
-      <style jsx global>{`
+      <style>{`
         :root {
           --primary: #135bec;
           --background-light: #f6f6f8;

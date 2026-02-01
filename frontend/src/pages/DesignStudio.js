@@ -4,6 +4,9 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import toast from 'react-hot-toast';
+import BlockIdentification from './DesignStudioSections/BlockIdentification';
+import BlockGeometrySupports from './DesignStudioSections/BlockGeometrySupports';
+import BlockReinforcement from './DesignStudioSections/BlockReinforcement';
 
 const energyOptions = ['DES', 'DMO', 'DMI'];
 const lengthOptions = ['6m', '9m', '12m'];
@@ -13,6 +16,11 @@ const hookOptions = [
   { label: '135°', value: '135' },
   { label: '180°', value: '180' },
 ];
+const diameterOptions = ['#2', '#3', '#4', '#5', '#6', '#7', '#8', '#9', '#10', '#11', '#14', '#18'];
+const barGroupSchema = z.object({
+  quantity: z.coerce.number().int().min(1, 'Cantidad mínima 1'),
+  diameter: z.enum(diameterOptions),
+});
 
 const stirrupSchema = z.object({
   zone: z.string().min(1, 'Requerido'),
@@ -39,13 +47,12 @@ const formSchema = z.object({
   element_identifier: z.string().min(1, 'Campo obligatorio'),
   element_level: elementLevelSchema,
   element_quantity: z.coerce.number().int().min(1, 'Cantidad mínima 1'),
-  top_bars_qty: z.coerce.number().int().min(1, 'Debe ser al menos 1'),
-  bottom_bars_qty: z.coerce.number().int().min(1, 'Debe ser al menos 1'),
-  top_bar_diameters_text: z.string().min(1, 'Define los diámetros superiores'),
-  bottom_bar_diameters_text: z.string().min(1, 'Define los diámetros inferiores'),
+  top_bars_config: z.array(barGroupSchema).min(1, 'Agrega al menos un grupo de barras superiores'),
+  bottom_bars_config: z.array(barGroupSchema).min(1, 'Agrega al menos un grupo de barras inferiores'),
   max_rebar_length_m: z.enum(lengthOptions),
   lap_splice_length_min_m: z.coerce.number().positive('Longitud inválida'),
   lap_splice_location: z.string().min(1, 'Describe la ubicación'),
+  beam_total_length_m: z.coerce.number().nonnegative('Longitud total inválida'),
   has_initial_cantilever: z.boolean(),
   has_final_cantilever: z.boolean(),
   hook_type: z.enum(hookOptions.map((opt) => opt.value)),
@@ -77,16 +84,24 @@ const formSchema = z.object({
   notes: z.string().optional(),
 });
 
+const calculateBeamTotalLength = (spans, supports) => {
+  const spanSum = (spans || []).reduce((sum, span) => sum + Number(span?.clear_span_between_supports_m || 0), 0);
+  const supportSum = (supports || []).reduce((sum, support) => sum + Number(support?.support_width_cm || 0) / 100, 0);
+  const total = spanSum + supportSum;
+  return Number.isFinite(total) ? Number(total.toFixed(2)) : 0;
+};
+
 const defaultValues = {
   project_name: 'Centro Cultural La Estación',
   beam_label: 'VIGA-E3-12',
   element_identifier: 'VIGA-E3-12',
   element_level: 3.52,
   element_quantity: 1,
-  top_bars_qty: 4,
-  bottom_bars_qty: 2,
-  top_bar_diameters_text: '#5, #6',
-  bottom_bar_diameters_text: '#5',
+  top_bars_config: [
+    { quantity: 2, diameter: '#5' },
+    { quantity: 2, diameter: '#6' },
+  ],
+  bottom_bars_config: [{ quantity: 2, diameter: '#5' }],
   max_rebar_length_m: '9m',
   lap_splice_length_min_m: 0.75,
   lap_splice_location: 'Traslapo centrado a 1.50 m del apoyo A',
@@ -116,6 +131,8 @@ const defaultValues = {
   notes: 'Detalle conforme a NSR-10 Título C.\nConsiderar recubrimientos adicionales por exposición costa.',
 };
 
+defaultValues.beam_total_length_m = calculateBeamTotalLength(defaultValues.span_geometries, defaultValues.axis_supports);
+
 const DesignStudio = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastDesign, setLastDesign] = useState(null);
@@ -140,6 +157,18 @@ const DesignStudio = () => {
     remove: removeStirrup,
   } = useFieldArray({ control, name: 'stirrups_config' });
 
+  const {
+    fields: topBarFields,
+    append: appendTopBarGroup,
+    remove: removeTopBarGroup,
+  } = useFieldArray({ control, name: 'top_bars_config' });
+
+  const {
+    fields: bottomBarFields,
+    append: appendBottomBarGroup,
+    remove: removeBottomBarGroup,
+  } = useFieldArray({ control, name: 'bottom_bars_config' });
+
   const { fields: axisSupportFields, replace: replaceAxisSupports } = useFieldArray({ control, name: 'axis_supports' });
   const { fields: spanGeometryFields, replace: replaceSpanGeometries } = useFieldArray({ control, name: 'span_geometries' });
 
@@ -151,6 +180,67 @@ const DesignStudio = () => {
   const watchSpanGeometries = watch('span_geometries');
   const watchInitialCantilever = watch('has_initial_cantilever');
   const watchFinalCantilever = watch('has_final_cantilever');
+  const watchTopBarGroups = watch('top_bars_config');
+  const watchBottomBarGroups = watch('bottom_bars_config');
+  const watchBeamTotalLength = watch('beam_total_length_m');
+  const summarizeBarConfig = (config) => {
+    if (!Array.isArray(config) || config.length === 0) {
+      return {
+        totalBars: 0,
+        groupsCount: 0,
+        diametersLabel: 'Sin Φ definidos',
+        detailLabel: 'Sin configuración activa',
+      };
+    }
+
+    const sanitizedGroups = config
+      .map((group) => ({
+        quantity: Number(group?.quantity) || 0,
+        diameter: group?.diameter || null,
+      }))
+      .filter((group) => group.quantity > 0 && group.diameter);
+
+    const totalBars = sanitizedGroups.reduce((sum, group) => sum + group.quantity, 0);
+    const groupsCount = sanitizedGroups.length;
+    const diameters = [...new Set(sanitizedGroups.map((group) => group.diameter))];
+    const detailLabel = groupsCount
+      ? sanitizedGroups.map((group) => `${group.quantity}x${group.diameter}`).join(' + ')
+      : 'Sin configuración activa';
+
+    return {
+      totalBars,
+      groupsCount,
+      diametersLabel: diameters.length ? diameters.join(', ') : 'Sin Φ definidos',
+      detailLabel,
+    };
+  };
+  const topBarsGroupError = errors.top_bars_config?.root?.message || errors.top_bars_config?.message;
+  const bottomBarsGroupError = errors.bottom_bars_config?.root?.message || errors.bottom_bars_config?.message;
+  const totalTopBars = useMemo(
+    () =>
+      (watchTopBarGroups || []).reduce((sum, group) => {
+        const qty = Number(group?.quantity);
+        return sum + (Number.isFinite(qty) ? qty : 0);
+      }, 0),
+    [watchTopBarGroups]
+  );
+  const totalBottomBars = useMemo(
+    () =>
+      (watchBottomBarGroups || []).reduce((sum, group) => {
+        const qty = Number(group?.quantity);
+        return sum + (Number.isFinite(qty) ? qty : 0);
+      }, 0),
+    [watchBottomBarGroups]
+  );
+  const topBarCharacteristics = useMemo(() => summarizeBarConfig(watchTopBarGroups), [watchTopBarGroups]);
+  const bottomBarCharacteristics = useMemo(
+    () => summarizeBarConfig(watchBottomBarGroups),
+    [watchBottomBarGroups]
+  );
+  const beamTotalLength = useMemo(
+    () => calculateBeamTotalLength(watchSpanGeometries, watchAxisSupports),
+    [watchSpanGeometries, watchAxisSupports]
+  );
   const elementLevelField = register('element_level', { valueAsNumber: true });
 
   useEffect(() => {
@@ -214,6 +304,22 @@ const DesignStudio = () => {
     }
   }, [watchAxisSupports, watchInitialCantilever, watchFinalCantilever, setValue]);
 
+  useEffect(() => {
+    register('beam_total_length_m', { valueAsNumber: true });
+  }, [register]);
+
+  useEffect(() => {
+    if (!Number.isFinite(beamTotalLength)) {
+      return;
+    }
+    const nextValue = Number(beamTotalLength.toFixed(2));
+    const currentValue = Number(watchBeamTotalLength);
+    if (Number.isFinite(currentValue) && Math.abs(currentValue - nextValue) < 0.001) {
+      return;
+    }
+    setValue('beam_total_length_m', nextValue, { shouldDirty: true });
+  }, [beamTotalLength, watchBeamTotalLength, setValue]);
+
   const preview = useMemo(() => {
     const totalLength =
       watchSpanGeometries?.reduce((sum, span) => sum + Number(span.clear_span_between_supports_m || 0), 0) || 0;
@@ -224,14 +330,24 @@ const DesignStudio = () => {
     };
   }, [watchSpanGeometries, watchStirrups]);
 
-  const parseDiameterList = (value) => {
-    if (!value) return null;
-    const tokens = value
-      .split(',')
-      .map((token) => token.trim())
-      .filter((token) => token.length > 0);
-    return tokens.length ? tokens : null;
-  };
+  const spanOverview = useMemo(() => {
+    const totalSpans = Number(watchSpanCount) || 0;
+    let cantileverLabel = 'Sin voladizos';
+    if (watchInitialCantilever && watchFinalCantilever) {
+      cantileverLabel = 'Inicial y final';
+    } else if (watchInitialCantilever) {
+      cantileverLabel = 'Solo inicial';
+    } else if (watchFinalCantilever) {
+      cantileverLabel = 'Solo final';
+    }
+
+    return {
+      totalSpans,
+      totalLengthValue: beamTotalLength,
+      totalLengthLabel: beamTotalLength.toFixed(2),
+      cantileverLabel,
+    };
+  }, [watchSpanCount, watchInitialCantilever, watchFinalCantilever, beamTotalLength]);
 
   const formatDimensionValue = (value) => {
     if (value === undefined || value === null) {
@@ -257,6 +373,24 @@ const DesignStudio = () => {
     setValue('element_level', formatted, { shouldValidate: true, shouldDirty: true });
   };
 
+  const expandBarConfig = (config) => {
+    if (!Array.isArray(config)) {
+      return [];
+    }
+    const expanded = [];
+    config.forEach((group) => {
+      const qty = Number(group?.quantity);
+      const diameter = group?.diameter;
+      if (!Number.isFinite(qty) || qty <= 0 || !diameter) {
+        return;
+      }
+      for (let index = 0; index < qty; index += 1) {
+        expanded.push(diameter);
+      }
+    });
+    return expanded;
+  };
+
   const onSubmit = async (values) => {
     setIsSubmitting(true);
     try {
@@ -271,9 +405,10 @@ const DesignStudio = () => {
         has_initial_cantilever,
         has_final_cantilever,
         stirrups_config,
-        top_bar_diameters_text,
-        bottom_bar_diameters_text,
+        top_bars_config,
+        bottom_bars_config,
         element_level,
+        beam_total_length_m,
         ...rest
       } = values;
 
@@ -308,16 +443,21 @@ const DesignStudio = () => {
       );
 
       const hasCantilevers = Boolean(has_initial_cantilever || has_final_cantilever);
+      const expandedTopBars = expandBarConfig(top_bars_config);
+      const expandedBottomBars = expandBarConfig(bottom_bars_config);
 
       const payload = {
         ...rest,
         element_level: formattedLevel,
         has_cantilevers: hasCantilevers,
+        beam_total_length_m: Number(beam_total_length_m) || 0,
         axis_numbering: axisNumbering || null,
         support_widths_cm: supportWidths,
         span_geometries: spanGeometryPayload,
-        top_bar_diameters: parseDiameterList(top_bar_diameters_text),
-        bottom_bar_diameters: parseDiameterList(bottom_bar_diameters_text),
+        top_bars_qty: expandedTopBars.length,
+        bottom_bars_qty: expandedBottomBars.length,
+        top_bar_diameters: expandedTopBars,
+        bottom_bar_diameters: expandedBottomBars,
         section_changes: validSectionChanges.length ? validSectionChanges : null,
         stirrups_config: stirrups_config.map((zone) => ({
           zone: zone.zone,
@@ -379,399 +519,48 @@ const DesignStudio = () => {
       <main className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.85fr] gap-8 px-8 py-10">
         <section className="bg-[#0c1326] border border-slate-800/70 rounded-3xl p-8 shadow-[0_20px_80px_rgba(2,6,23,0.75)]">
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
-            <div className="space-y-6 bg-[#050b16]/40 border border-slate-800 rounded-3xl p-6 shadow-[0_14px_45px_rgba(5,11,22,0.6)]">
-              <header className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Bloque 01</p>
-                  <h2 className="text-lg font-semibold">Identificación y materiales</h2>
-                </div>
-                <span className="text-xs text-slate-400">Proyecto · f’c · fy · DES</span>
-              </header>
+            <BlockIdentification
+              register={register}
+              renderError={renderError}
+              elementLevelField={elementLevelField}
+              handleLevelBlur={handleLevelBlur}
+              energyOptions={energyOptions}
+            />
 
-              <div className="grid md:grid-cols-2 gap-6">
-                <div>
-                  <label className="label">Proyecto</label>
-                  <input
-                    className="input"
-                    placeholder="Nombre del proyecto"
-                    {...register('project_name')}
-                  />
-                  {renderError('project_name')}
-                </div>
-                <div>
-                  <label className="label">Viga / Identificador</label>
-                  <input className="input" {...register('beam_label')} />
-                  {renderError('beam_label')}
-                </div>
-                <div>
-                  <label className="label">Nivel (m)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    lang="en"
-                    inputMode="decimal"
-                    className="input no-spin"
-                    {...elementLevelField}
-                    onBlur={(event) => {
-                      elementLevelField.onBlur(event);
-                      handleLevelBlur(event);
-                    }}
-                  />
-                  {renderError('element_level')}
-                </div>
-                <div>
-                  <label className="label">Cantidad de elementos</label>
-                  <input type="number" className="input" min={1} {...register('element_quantity', { valueAsNumber: true })} />
-                  {renderError('element_quantity')}
-                </div>
-              </div>
+            <BlockGeometrySupports
+              register={register}
+              renderError={renderError}
+              axisSupportFields={axisSupportFields}
+              spanGeometryFields={spanGeometryFields}
+              errors={errors}
+              spanOverview={spanOverview}
+            />
 
-              <div className="grid md:grid-cols-3 gap-6">
-                <div>
-                  <label className="label">f’c concreto</label>
-                  <select className="input" {...register('concrete_strength')}>
-                    <option value="21 MPa (3000 psi)">21 MPa (3000 psi)</option>
-                    <option value="24 MPa (3500 psi)">24 MPa (3500 psi)</option>
-                    <option value="28 MPa (4000 psi)">28 MPa (4000 psi)</option>
-                    <option value="32 MPa (4600 psi)">32 MPa (4600 psi)</option>
-                  </select>
-                  {renderError('concrete_strength')}
-                </div>
-                <div>
-                  <label className="label">fy refuerzo</label>
-                  <select className="input" {...register('reinforcement')}>
-                    <option value="420 MPa (Grado 60)">420 MPa (Grado 60)</option>
-                    <option value="520 MPa (Grado 75)">520 MPa (Grado 75)</option>
-                  </select>
-                  {renderError('reinforcement')}
-                </div>
-                <div>
-                  <label className="label">Clase de disipación</label>
-                  <select className="input" {...register('energy_dissipation_class')}>
-                    {energyOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-6 bg-[#040916]/60 border border-slate-900/80 rounded-3xl p-6 shadow-[0_16px_60px_rgba(2,6,23,0.55)]">
-              <header className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Bloque 02</p>
-                  <h2 className="text-lg font-semibold">Geometría y apoyos</h2>
-                </div>
-                <span className="text-xs text-slate-400">Tramos · ejes · secciones</span>
-              </header>
-
-              <div>
-                <label className="label">Número de luces</label>
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  className="input input-compact input-short"
-                  {...register('span_count', { valueAsNumber: true })}
-                />
-                {renderError('span_count')}
-                <p className="text-xs text-slate-400 mt-1 italic">* Incluye tramos en Voladizo inicial o final</p>
-              </div>
-
-              <div>
-                <label className="label">Voladizos</label>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <label className="flex items-center gap-3 bg-slate-900/50 border border-slate-800 rounded-2xl px-4 py-3 text-sm">
-                    <input type="checkbox" className="accent-primary" {...register('has_initial_cantilever')} />
-                    Voladizo inicial
-                  </label>
-                  <label className="flex items-center gap-3 bg-slate-900/50 border border-slate-800 rounded-2xl px-4 py-3 text-sm">
-                    <input type="checkbox" className="accent-primary" {...register('has_final_cantilever')} />
-                    Voladizo final
-                  </label>
-                </div>
-              </div>
-
-              <div>
-                <label className="label">Ejes</label>
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {axisSupportFields.length === 0 ? (
-                    <p className="text-xs text-slate-500 col-span-full">Ajusta el número de luces para definir los ejes.</p>
-                  ) : (
-                    axisSupportFields.map((field, index) => (
-                      <div key={field.id} className="border border-slate-800 rounded-2xl p-3 space-y-2 bg-slate-900/30">
-                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Eje {index + 1}</p>
-                        <div className="flex gap-2 items-end">
-                          <div className="flex-1">
-                            <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500 mb-1">Nombre</p>
-                            <input
-                              className="input input-compact"
-                              placeholder={`EJE ${index + 1}`}
-                              {...register(`axis_supports.${index}.label`)}
-                            />
-                          </div>
-                          <div className="w-24">
-                            <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500 mb-1">Ancho (cm)</p>
-                            <input
-                              type="number"
-                              step={5}
-                              min={0}
-                              className="input input-compact text-sm"
-                              placeholder="0"
-                              {...register(`axis_supports.${index}.support_width_cm`, { valueAsNumber: true })}
-                            />
-                          </div>
-                        </div>
-                        <p className="text-[10px] text-slate-500">0 cuando exista voladizo.</p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-800/70 bg-[#050b16]/30 p-5 space-y-4">
-                <p className="text-[11px] uppercase tracking-[0.4em] text-slate-500">Luces y secciones</p>
-                {spanGeometryFields.length === 0 ? (
-                  <p className="text-xs text-slate-500">Ajusta el número de luces para generar las configuraciones.</p>
-                ) : (
-                  <div className="space-y-4">
-                    {spanGeometryFields.map((field, index) => (
-                      <div key={field.id} className="border border-slate-800 rounded-2xl p-4 bg-slate-900/30 space-y-4">
-                        <div className="grid lg:grid-cols-[160px_minmax(0,1fr)] gap-4 items-start">
-                          <div>
-                            <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500 mb-1">Luz {index + 1}</p>
-                            <label className="label">Luz libre (m)</label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              lang="en"
-                              inputMode="decimal"
-                              className="input input-compact input-short"
-                              {...register(`span_geometries.${index}.clear_span_between_supports_m`, {
-                                valueAsNumber: true,
-                              })}
-                            />
-                            {errors.span_geometries?.[index]?.clear_span_between_supports_m && (
-                              <p className="text-rose-400 text-xs mt-1">
-                                {errors.span_geometries[index].clear_span_between_supports_m.message}
-                              </p>
-                            )}
-                          </div>
-                          <div>
-                            <label className="label">Sección</label>
-                            <div className="grid sm:grid-cols-2 gap-4">
-                              <div>
-                                <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 mb-2">Base (cm)</p>
-                                <input
-                                  type="number"
-                                  step={5}
-                                  min={5}
-                                  className="input"
-                                  placeholder="30"
-                                  {...register(`span_geometries.${index}.section_base_cm`, {
-                                    valueAsNumber: true,
-                                  })}
-                                />
-                                {errors.span_geometries?.[index]?.section_base_cm && (
-                                  <p className="text-rose-400 text-xs mt-1">
-                                    {errors.span_geometries[index].section_base_cm.message}
-                                  </p>
-                                )}
-                              </div>
-                              <div>
-                                <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 mb-2">Altura (cm)</p>
-                                <input
-                                  type="number"
-                                  step={5}
-                                  min={5}
-                                  className="input"
-                                  placeholder="45"
-                                  {...register(`span_geometries.${index}.section_height_cm`, {
-                                    valueAsNumber: true,
-                                  })}
-                                />
-                                {errors.span_geometries?.[index]?.section_height_cm && (
-                                  <p className="text-rose-400 text-xs mt-1">
-                                    {errors.span_geometries[index].section_height_cm.message}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-6 bg-[#030a18]/70 border border-slate-900 rounded-3xl p-6 shadow-[0_18px_70px_rgba(2,6,23,0.6)]">
-              <header className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Bloque 03</p>
-                  <h2 className="text-lg font-semibold">Armaduras longitudinales y transversales</h2>
-                </div>
-                <span className="text-xs text-slate-400">Barras · Φ · L<sub>máx</sub> · traslapos</span>
-              </header>
-
-              <div className="bg-[#0b172f] border border-slate-800 rounded-3xl p-5 space-y-4">
-                <p className="text-[11px] uppercase tracking-[0.4em] text-slate-500">Parámetros generales</p>
-                <div className="grid md:grid-cols-3 gap-5">
-                  <div>
-                    <label className="label">L. máxima barra</label>
-                    <div className="flex gap-2">
-                      {lengthOptions.map((length) => (
-                        <button
-                          type="button"
-                          key={length}
-                          onClick={() => setValue('max_rebar_length_m', length, { shouldDirty: true })}
-                          className={`flex-1 py-2 rounded-lg border text-sm font-semibold transition-colors ${
-                            selectedLength === length
-                              ? 'bg-primary/90 text-white border-primary'
-                              : 'bg-transparent border-slate-700 text-slate-300'
-                          }`}
-                        >
-                          {length}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="label">Gancho</label>
-                    <select className="input" {...register('hook_type')}>
-                      {hookOptions.map((hook) => (
-                        <option key={hook.value} value={hook.value}>
-                          {hook.label}
-                        </option>
-                      ))}
-                    </select>
-                    {renderError('hook_type')}
-                  </div>
-                  <div>
-                    <label className="label">Recubrimiento (cm)</label>
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      className="input"
-                      {...register('cover_cm', { valueAsNumber: true })}
-                    />
-                    {renderError('cover_cm')}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-6">
-                <div>
-                  <label className="label">Barras superiores</label>
-                  <input type="number" className="input" min={0} {...register('top_bars_qty', { valueAsNumber: true })} />
-                  {renderError('top_bars_qty')}
-                </div>
-                <div>
-                  <label className="label">Barras inferiores</label>
-                  <input type="number" className="input" min={0} {...register('bottom_bars_qty', { valueAsNumber: true })} />
-                  {renderError('bottom_bars_qty')}
-                </div>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-6">
-                <div>
-                  <label className="label">Diámetros superiores (en pares)</label>
-                  <input className="input" placeholder="#5, #6" {...register('top_bar_diameters_text')} />
-                  <p className="text-xs text-slate-400 mt-1">Separa por comas para definir varios diámetros.</p>
-                  {renderError('top_bar_diameters_text')}
-                </div>
-                <div>
-                  <label className="label">Diámetros inferiores</label>
-                  <input className="input" placeholder="#5, #6" {...register('bottom_bar_diameters_text')} />
-                  <p className="text-xs text-slate-400 mt-1">Incluye cada barra según el detalle longitudinal.</p>
-                  {renderError('bottom_bar_diameters_text')}
-                </div>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-6">
-                <div>
-                  <label className="label">Longitud mínima de traslapo (m)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    lang="en"
-                    inputMode="decimal"
-                    className="input"
-                    {...register('lap_splice_length_min_m', { valueAsNumber: true })}
-                  />
-                  {renderError('lap_splice_length_min_m')}
-                </div>
-                <div>
-                  <label className="label">Ubicación del traslapo</label>
-                  <input className="input" {...register('lap_splice_location')} />
-                  {renderError('lap_splice_location')}
-                </div>
-              </div>
-
-              <div className="bg-[#0b172f] rounded-3xl border border-slate-800 p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-400">
-                    Estribos
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={() => appendStirrup({ zone: '', spacing_m: '', quantity: '' })}
-                    className="text-xs uppercase tracking-[0.3em] text-primary"
-                  >
-                    + Añadir zona
-                  </button>
-                </div>
-                <div className="space-y-3">
-                  {stirrupFields.map((field, index) => (
-                    <div key={field.id} className="grid md:grid-cols-3 gap-3 items-end">
-                      <div>
-                        <label className="label">Zona</label>
-                        <input className="input" {...register(`stirrups_config.${index}.zone`)} />
-                        {errors.stirrups_config?.[index]?.zone && (
-                          <p className="text-rose-400 text-xs mt-1">
-                            {errors.stirrups_config[index].zone.message}
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="label">Espaciamiento (m)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          lang="en"
-                          inputMode="decimal"
-                          className="input"
-                          {...register(`stirrups_config.${index}.spacing_m`, { valueAsNumber: true })}
-                        />
-                      </div>
-                      <div className="flex items-end gap-3">
-                        <div className="flex-1">
-                          <label className="label">Cantidad</label>
-                          <input type="number" className="input" {...register(`stirrups_config.${index}.quantity`, { valueAsNumber: true })} />
-                        </div>
-                        {stirrupFields.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeStirrup(index)}
-                            className="text-xs uppercase tracking-[0.3em] text-slate-400"
-                          >
-                            Quitar
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {errors.stirrups_config?.message && (
-                    <p className="text-rose-400 text-xs">{errors.stirrups_config.message}</p>
-                  )}
-                </div>
-              </div>
-            </div>
+            <BlockReinforcement
+              register={register}
+              errors={errors}
+              renderError={renderError}
+              selectedLength={selectedLength}
+              setValue={setValue}
+              lengthOptions={lengthOptions}
+              hookOptions={hookOptions}
+              diameterOptions={diameterOptions}
+              topBarFields={topBarFields}
+              appendTopBarGroup={appendTopBarGroup}
+              removeTopBarGroup={removeTopBarGroup}
+              bottomBarFields={bottomBarFields}
+              appendBottomBarGroup={appendBottomBarGroup}
+              removeBottomBarGroup={removeBottomBarGroup}
+              totalTopBars={totalTopBars}
+              totalBottomBars={totalBottomBars}
+              topBarCharacteristics={topBarCharacteristics}
+              bottomBarCharacteristics={bottomBarCharacteristics}
+              topBarsGroupError={topBarsGroupError}
+              bottomBarsGroupError={bottomBarsGroupError}
+              stirrupFields={stirrupFields}
+              appendStirrup={appendStirrup}
+              removeStirrup={removeStirrup}
+            />
 
             <div>
               <label className="label">Notas</label>
@@ -867,7 +656,7 @@ const DesignStudio = () => {
         </aside>
       </main>
 
-      <style jsx>{`
+      <style>{`
         .label {
           display: block;
           font-size: 11px;
