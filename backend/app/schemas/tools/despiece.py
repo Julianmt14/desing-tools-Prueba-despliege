@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, validator
 
@@ -81,6 +81,50 @@ class MaterialItem(BaseModel):
         from_attributes = True
 
 
+class StirrupSpanSpec(BaseModel):
+    span_index: int = Field(..., description="Índice de la luz")
+    label: str = Field(..., description="Etiqueta legible de la luz")
+    base_cm: float = Field(..., description="Base bruta de la sección (cm)")
+    height_cm: float = Field(..., description="Altura bruta de la sección (cm)")
+    cover_cm: float = Field(..., description="Recubrimiento adoptado (cm)")
+    stirrup_width_cm: float = Field(..., description="Ancho interno del estribo (cm)")
+    stirrup_height_cm: float = Field(..., description="Altura interna del estribo (cm)")
+    effective_depth_m: float = Field(..., description="d efectivo en metros")
+    spacing_confined_m: float = Field(..., description="Separación d/4 para zonas confinadas (m)")
+    spacing_non_confined_m: float = Field(..., description="Separación d/2 para zonas no confinadas (m)")
+
+    class Config:
+        from_attributes = True
+
+
+class StirrupSegment(BaseModel):
+    start_m: float = Field(..., description="Inicio del segmento (m)")
+    end_m: float = Field(..., description="Fin del segmento (m)")
+    zone_type: Literal["confined", "non_confined"] = Field(..., description="Tipo de zona")
+    spacing_m: float = Field(..., description="Separación utilizada (m)")
+    estimated_count: Optional[int] = Field(None, description="Cantidad estimada de estribos en el segmento")
+
+    @validator("end_m")
+    def validate_segment_length(cls, value: float, values: Dict[str, Any]) -> float:
+        if "start_m" in values and value <= values["start_m"]:
+            raise ValueError("end_m debe ser mayor que start_m")
+        return value
+
+    class Config:
+        from_attributes = True
+
+
+class StirrupDesignSummary(BaseModel):
+    diameter: str = Field(..., description="Diámetro base del estribo")
+    hook_type: str = Field(..., description="Tipo de gancho del estribo")
+    additional_branches_total: int = Field(..., description="Ramas adicionales declaradas por el usuario")
+    span_specs: List[StirrupSpanSpec] = Field(..., description="Geometría y d por luz")
+    zone_segments: List[StirrupSegment] = Field(..., description="Distribución d/4 y d/2 a lo largo de la viga")
+
+    class Config:
+        from_attributes = True
+
+
 class ContinuousBarsInfo(BaseModel):
     """Información sobre barras continuas"""
 
@@ -104,6 +148,7 @@ class DetailingResults(BaseModel):
     validation_passed: bool = Field(..., description="Indica si pasa todas las validaciones")
     total_weight_kg: Optional[float] = Field(None, description="Peso total del acero (kg)")
     total_bars_count: Optional[int] = Field(None, description="Número total de barras")
+    stirrups_summary: Optional[StirrupDesignSummary] = Field(None, description="Resumen de diseño de estribos")
 
     class Config:
         from_attributes = True

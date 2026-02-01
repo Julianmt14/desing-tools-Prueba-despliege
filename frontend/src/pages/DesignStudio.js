@@ -17,6 +17,13 @@ import { useBeamDetailing, extractBeamData } from '../hooks/useBeamDetailing';
 import apiClient from '../utils/apiClient';
 import { getAccessToken, getRefreshToken } from '../utils/auth';
 import BeamDetailingView from './DesignStudioSections/BeamDetailingView';
+import {
+  DEFAULT_STIRRUP_DIAMETER,
+  DEFAULT_STIRRUP_HOOK_TYPE,
+  calculateEffectiveDepth,
+  calculateSpacingForZone,
+  estimateStirrupTotalLengthCm,
+} from '../utils/stirrups';
 
 
 const energyOptions = getEnergyOptions();
@@ -24,6 +31,11 @@ const lengthOptions = MAX_BAR_LENGTH_OPTIONS;
 const diameterOptions = getDiameterOptions();
 const DEFAULT_ENERGY_CLASS = 'DES';
 const defaultHookOptions = getHookOptionsForClass(DEFAULT_ENERGY_CLASS);
+const STIRRUP_TYPE_OPTIONS = [
+  { value: 'C', label: 'Estribo en "C"' },
+  { value: 'S', label: 'Estribo en "S"' },
+];
+const STIRRUP_TYPE_VALUES = STIRRUP_TYPE_OPTIONS.map((option) => option.value);
 const LAP_SPLICE_FC_MAP = {
   '21 MPa (3000 psi)': 'fc_21_mpa_m',
   '24 MPa (3500 psi)': 'fc_24_mpa_m',
@@ -94,9 +106,8 @@ const segmentReinforcementSchema = z
   );
 
 const stirrupSchema = z.object({
-  zone: z.string().min(1, 'Requerido'),
-  spacing_m: z.coerce.number().positive('Ingrese un espaciamiento válido'),
-  quantity: z.coerce.number().int().positive('Cantidad inválida'),
+  additional_branches: z.coerce.number().int().min(0, 'Cantidad mínima 0'),
+  stirrup_type: z.enum(STIRRUP_TYPE_VALUES),
 });
 
 const elementLevelSchema = z.preprocess(
@@ -202,8 +213,8 @@ const defaultValues = {
   ],
   span_count: 3,
   stirrups_config: [
-    { zone: 'Confinada', spacing_m: 0.07, quantity: 18 },
-    { zone: 'Central', spacing_m: 0.15, quantity: 12 },
+    { additional_branches: 0, stirrup_type: 'C' },
+    { additional_branches: 0, stirrup_type: 'S' },
   ],
   energy_dissipation_class: DEFAULT_ENERGY_CLASS,
   concrete_strength: '21 MPa (3000 psi)',
@@ -279,6 +290,7 @@ const DesignStudio = () => {
   const watchSegmentReinforcements = watch('segment_reinforcements');
   const watchBeamTotalLength = watch('beam_total_length_m');
   const watchConcreteStrength = watch('concrete_strength');
+  const watchCoverCm = watch('cover_cm');
   const nsrWarnings = useMemo(
     () => validateNSR10({ energy_dissipation_class: energyClass, hook_type: watchHookType }),
     [energyClass, watchHookType]
@@ -505,12 +517,65 @@ const DesignStudio = () => {
   const preview = useMemo(() => {
     const totalLength =
       watchSpanGeometries?.reduce((sum, span) => sum + Number(span.clear_span_between_supports_m || 0), 0) || 0;
-    const stirrupCount = watchStirrups?.reduce((sum, zone) => sum + Number(zone.quantity || 0), 0) || 0;
+    const stirrupCount = watchStirrups?.reduce((sum, stirrup) => sum + Number(stirrup.additional_branches || 0), 0) || 0;
     return {
       totalLength: totalLength.toFixed(2),
       stirrupCount,
     };
   }, [watchSpanGeometries, watchStirrups]);
+  const detailingStirrupsSummary = detailingResults?.stirrups_summary;
+  const stirrupSegmentsByZone = useMemo(() => {
+    if (!detailingStirrupsSummary?.zone_segments) {
+      return { confined: [], non_confined: [] };
+    }
+    return (detailingStirrupsSummary.zone_segments || []).reduce(
+      (acc, segment) => {
+        if (segment.zone_type === 'confined') {
+          acc.confined.push(segment);
+        } else {
+          acc.non_confined.push(segment);
+        }
+        return acc;
+      },
+      { confined: [], non_confined: [] }
+    );
+  }, [detailingStirrupsSummary]);
+  const stirrupEstimatedTotal = useMemo(() => {
+    const segments = detailingStirrupsSummary?.zone_segments;
+    if (!Array.isArray(segments) || segments.length === 0) {
+      return null;
+    }
+    const total = segments.reduce((sum, segment) => {
+      const value = Number(segment?.estimated_count || 0);
+      return sum + (Number.isFinite(value) ? value : 0);
+    }, 0);
+    return total;
+  }, [detailingStirrupsSummary]);
+
+  const stirrupBaseSpecs = useMemo(() => {
+    const coverValue = Number(watchCoverCm) || 0;
+    if (!Array.isArray(watchSpanGeometries)) {
+      return [];
+    }
+    return watchSpanGeometries.map((span, index) => {
+      const baseCm = Number(span?.section_base_cm) || 0;
+      const sectionHeightCm = Number(span?.section_height_cm) || 0;
+      const effectiveDepth = calculateEffectiveDepth(sectionHeightCm, coverValue);
+      const stirrupWidthCm = Math.max(baseCm - 2 * coverValue, 0);
+      const stirrupHeightCm = Math.max(sectionHeightCm - 2 * coverValue, 0);
+      const { totalLengthCm, hookLengthCm } = estimateStirrupTotalLengthCm(stirrupWidthCm, stirrupHeightCm);
+      return {
+        label: `Luz ${index + 1}`,
+        stirrupWidthCm,
+        stirrupHeightCm,
+        effectiveDepthCm: effectiveDepth * 100,
+        spacingConfinedCm: calculateSpacingForZone(effectiveDepth, 'confined') * 100,
+        spacingNonConfinedCm: calculateSpacingForZone(effectiveDepth, 'non_confined') * 100,
+        stirrupTotalLengthCm: totalLengthCm,
+        stirrupHookLengthCm: hookLengthCm,
+      };
+    });
+  }, [watchSpanGeometries, watchCoverCm]);
 
   const spanOverview = useMemo(() => {
     const totalSpans = Number(watchSpanCount) || 0;
@@ -707,10 +772,9 @@ const DesignStudio = () => {
         bottom_bar_diameters: expandedBottomBars,
         section_changes: validSectionChanges.length ? validSectionChanges : null,
         segment_reinforcements: segmentReinforcementsPayload.length ? segmentReinforcementsPayload : null,
-        stirrups_config: stirrups_config.map((zone) => ({
-          zone: zone.zone,
-          spacing_m: Number(zone.spacing_m),
-          quantity: Number(zone.quantity),
+        stirrups_config: stirrups_config.map((stirrup) => ({
+          additional_branches: Number(stirrup.additional_branches),
+          stirrup_type: stirrup.stirrup_type,
         })),
       };
 
@@ -814,6 +878,7 @@ const DesignStudio = () => {
               stirrupFields={stirrupFields}
               appendStirrup={appendStirrup}
               removeStirrup={removeStirrup}
+              stirrupTypeOptions={STIRRUP_TYPE_OPTIONS}
               lapSpliceLength={computedLapSpliceLength}
               isLapSpliceLoading={lapSpliceLoading}
               concreteStrength={watchConcreteStrength}
@@ -887,6 +952,93 @@ const DesignStudio = () => {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+
+          <div className="bg-[#050b16] border border-slate-800 rounded-3xl p-6 space-y-4 shadow-[0_20px_60px_rgba(2,6,23,0.65)]">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold uppercase tracking-[0.35em] text-slate-400">Especificación estribos</h2>
+              <span className="text-xs text-slate-400">Φ {DEFAULT_STIRRUP_DIAMETER} · {DEFAULT_STIRRUP_HOOK_TYPE}°</span>
+            </div>
+            {stirrupBaseSpecs.length ? (
+              <div className="space-y-3">
+                {stirrupBaseSpecs.map((spec) => (
+                  <div key={spec.label} className="rounded-2xl border border-slate-800 bg-[#070d1c] p-3 text-xs">
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span className="font-semibold text-slate-200 tracking-[0.3em]">{spec.label}</span>
+                      <span>d = {spec.effectiveDepthCm.toFixed(1)} cm</span>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Dimensiones</p>
+                        <p className="text-slate-100 font-semibold">{spec.stirrupWidthCm.toFixed(1)} × {spec.stirrupHeightCm.toFixed(1)} cm</p>
+                        {typeof spec.stirrupTotalLengthCm === 'number' ? (
+                          <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                            Longitud:
+                            <span className="ml-1 text-slate-100 font-semibold">
+                              {spec.stirrupTotalLengthCm.toFixed(1)} cm
+                            </span>
+                          </p>
+                        ) : null}
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Espaciados</p>
+                        <p className="text-slate-100 font-semibold">d/4 = {spec.spacingConfinedCm.toFixed(1)} cm</p>
+                        <p className="text-slate-400">d/2 = {spec.spacingNonConfinedCm.toFixed(1)} cm</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500">Añade al menos una luz para estimar la geometría del estribo.</p>
+            )}
+
+            <div className="pt-4 border-t border-slate-800">
+              <p className="text-[11px] uppercase tracking-[0.35em] text-slate-400 mb-2">Distribución NSR-10</p>
+              {detailingStirrupsSummary ? (
+                <div className="space-y-3 text-xs">
+                  <p className="text-slate-300">
+                    Ramas adicionales declaradas: {detailingStirrupsSummary.additional_branches_total || 0}
+                  </p>
+                  {typeof stirrupEstimatedTotal === 'number' ? (
+                    <p className="text-slate-300">
+                      Total estimado de estribos: <span className="text-slate-100 font-semibold">{stirrupEstimatedTotal}</span> uds
+                    </p>
+                  ) : null}
+                  {['confined', 'non_confined'].map((zoneKey) => {
+                    const segments = stirrupSegmentsByZone?.[zoneKey] || [];
+                    const label = zoneKey === 'confined' ? 'Zona confinada (d/4)' : 'Zona no confinada (d/2)';
+                    return (
+                      <div key={zoneKey}>
+                        <p className="text-[10px] uppercase tracking-[0.35em] text-slate-500 mb-1">{label}</p>
+                        {segments.length ? (
+                          <div className="space-y-1">
+                            {segments.map((segment, idx) => (
+                              <div
+                                key={`${zoneKey}-${idx}`}
+                                className="grid grid-cols-[auto_auto_auto] gap-3 items-center bg-[#090f1e] border border-slate-800 rounded-xl px-3 py-1 text-slate-200"
+                              >
+                                <span className="text-primary text-[11px] font-semibold">
+                                  {(segment.spacing_m * 100).toFixed(1)} cm
+                                </span>
+                                <span>{segment.start_m.toFixed(2)} – {segment.end_m.toFixed(2)} m</span>
+                                <span className="text-right text-slate-400">
+                                  {segment.estimated_count ?? '—'} uds
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-slate-500">Sin segmentos definidos.</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">Genera el despiece para visualizar la distribución normativa.</p>
+              )}
             </div>
           </div>
 

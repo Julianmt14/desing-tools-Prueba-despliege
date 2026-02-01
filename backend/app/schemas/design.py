@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -11,10 +11,32 @@ class SpanGeometry(BaseModel):
     height_cm: float = Field(..., ge=0)
 
 
-class StirrupZone(BaseModel):
-    zone: str
-    spacing_m: float = Field(..., gt=0)
-    quantity: int = Field(..., ge=1)
+class StirrupConfig(BaseModel):
+    additional_branches: int = Field(0, ge=0)
+    stirrup_type: Literal["C", "S"] = "C"
+
+    @model_validator(mode="before")
+    @classmethod
+    def allow_legacy_schema(cls, data: Any) -> Any:
+        """Permite convertir automáticamente configuraciones antiguas."""
+        if not isinstance(data, dict):
+            return data
+
+        if "additional_branches" in data or "stirrup_type" in data:
+            return data
+
+        legacy_quantity = data.get("quantity")
+        try:
+            parsed_quantity = int(legacy_quantity)
+        except (TypeError, ValueError):
+            parsed_quantity = 0
+
+        parsed_quantity = parsed_quantity if parsed_quantity >= 0 else 0
+
+        return {
+            "additional_branches": parsed_quantity,
+            "stirrup_type": "C",
+        }
 
 
 class SegmentRebarConfig(BaseModel):
@@ -57,7 +79,7 @@ class DespieceVigaBase(BaseModel):
     element_level: Optional[float] = None
     element_quantity: int = 1
     reinforcement: str = "420 MPa (Grado 60)"
-    stirrups_config: Optional[List[Dict[str, Any]]] = None
+    stirrups_config: Optional[List[StirrupConfig]] = None
     segment_reinforcements: Optional[List[Dict[str, Any]]] = None
     energy_dissipation_class: str = "DES"
     concrete_strength: str = "21 MPa (3000 psi)"
@@ -103,7 +125,7 @@ class DespieceVigaUpdate(BaseModel):
     element_level: Optional[float] = None
     element_quantity: Optional[int] = None
     reinforcement: Optional[str] = None
-    stirrups_config: Optional[List[Dict[str, Any]]] = None
+    stirrups_config: Optional[List[StirrupConfig]] = None
     segment_reinforcements: Optional[List[Dict[str, Any]]] = None
     energy_dissipation_class: Optional[str] = None
     concrete_strength: Optional[str] = None

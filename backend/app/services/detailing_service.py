@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple, Literal
 from datetime import datetime
 import math
 import logging
@@ -9,7 +9,19 @@ from app.schemas.tools.despiece import (
     RebarDetail,
     ProhibitedZone,
     MaterialItem,
-    DetailingResponse
+    DetailingResponse,
+    StirrupDesignSummary,
+    StirrupSegment,
+    StirrupSpanSpec,
+)
+from app.modules.stirrups import (
+    DEFAULT_STIRRUP_DIAMETER,
+    DEFAULT_STIRRUP_HOOK_TYPE,
+    calculate_effective_depth,
+    calculate_spacing_for_zone,
+    derive_confined_segments,
+    derive_unconfined_segments,
+    extract_splice_segments,
 )
 from app.services.detailing.segmentation import SegmentationMixin
 
@@ -213,6 +225,13 @@ class BeamDetailingService(SegmentationMixin):
                 edge_cover,
                 max_bar_length,
             )
+            stirrups_summary = self._build_stirrups_summary(
+                beam_data,
+                coordinates,
+                prohibited_zones,
+                top_bars,
+                bottom_bars,
+            )
             
             # 9. Optimizar cortes y generar lista de materiales
             material_list = self._generate_material_list(
@@ -244,7 +263,8 @@ class BeamDetailingService(SegmentationMixin):
                 warnings=warnings,
                 validation_passed=len(warnings) == 0,
                 total_weight_kg=total_weight,
-                total_bars_count=total_bars
+                total_bars_count=total_bars,
+                stirrups_summary=stirrups_summary,
             )
             
             computation_time = (datetime.now() - start_time).total_seconds() * 1000
@@ -532,6 +552,115 @@ class BeamDetailingService(SegmentationMixin):
 
         zones.sort(key=lambda z: z.start_m)
         return zones
+
+    def _assign_segments_to_spans(
+        self,
+        segments: List[Tuple[float, float]],
+        zone_type: Literal['confined', 'non_confined'],
+        coordinate_spans: List[Dict[str, Any]],
+        spec_map: Dict[int, StirrupSpanSpec],
+    ) -> List[StirrupSegment]:
+        assigned: List[StirrupSegment] = []
+        if not segments:
+            return assigned
+        for start, end in segments:
+            for span in coordinate_spans:
+                span_start = span.get('start')
+                span_end = span.get('end')
+                if span_start is None or span_end is None:
+                    continue
+                overlap_start = max(start, span_start)
+                overlap_end = min(end, span_end)
+                if overlap_end - overlap_start <= 0:
+                    continue
+                span_index = span.get('index')
+                if span_index is None:
+                    continue
+                spec = spec_map.get(span_index)
+                if spec is None:
+                    continue
+                spacing = (
+                    spec.spacing_confined_m if zone_type == 'confined' else spec.spacing_non_confined_m
+                )
+                if spacing > 0:
+                    segment_length = overlap_end - overlap_start
+                    estimated_count = max(1, math.floor(segment_length / spacing) + 1)
+                else:
+                    estimated_count = None
+                assigned.append(
+                    StirrupSegment(
+                        start_m=overlap_start,
+                        end_m=overlap_end,
+                        zone_type=zone_type,
+                        spacing_m=spacing,
+                        estimated_count=estimated_count,
+                    )
+                )
+        return assigned
+
+    def _build_stirrups_summary(
+        self,
+        beam_data: Dict[str, Any],
+        coordinates: Dict[str, Any],
+        prohibited_zones: List[ProhibitedZone],
+        top_bars: List[RebarDetail],
+        bottom_bars: List[RebarDetail],
+    ) -> Optional[StirrupDesignSummary]:
+        span_geometries = beam_data.get('span_geometries') or []
+        coordinate_spans = coordinates.get('spans', [])
+        if not span_geometries or not coordinate_spans:
+            return None
+
+        cover_cm_value = float(beam_data.get('cover_cm') or 0)
+        span_specs: List[StirrupSpanSpec] = []
+        for index, span in enumerate(span_geometries):
+            base_cm = float(span.get('section_base_cm') or 0)
+            height_cm = float(span.get('section_height_cm') or 0)
+            effective_depth = calculate_effective_depth(height_cm, cover_cm_value)
+            span_specs.append(
+                StirrupSpanSpec(
+                    span_index=index,
+                    label=span.get('label') or f"Luz {index + 1}",
+                    base_cm=base_cm,
+                    height_cm=height_cm,
+                    cover_cm=cover_cm_value,
+                    stirrup_width_cm=max(base_cm - 2 * cover_cm_value, 0.0),
+                    stirrup_height_cm=max(height_cm - 2 * cover_cm_value, 0.0),
+                    effective_depth_m=effective_depth,
+                    spacing_confined_m=calculate_spacing_for_zone(effective_depth, 'confined'),
+                    spacing_non_confined_m=calculate_spacing_for_zone(effective_depth, 'non_confined'),
+                )
+            )
+
+        if not span_specs:
+            return None
+
+        spec_map = {spec.span_index: spec for spec in span_specs}
+        lap_segments = extract_splice_segments(list(top_bars or []) + list(bottom_bars or []))
+        confined_segments = derive_confined_segments(prohibited_zones, lap_segments)
+        total_length = float(coordinates.get('total_length') or 0.0)
+        unconfined_segments = derive_unconfined_segments(total_length, confined_segments)
+
+        zone_segments: List[StirrupSegment] = []
+        zone_segments.extend(
+            self._assign_segments_to_spans(confined_segments, 'confined', coordinate_spans, spec_map)
+        )
+        zone_segments.extend(
+            self._assign_segments_to_spans(unconfined_segments, 'non_confined', coordinate_spans, spec_map)
+        )
+
+        additional_branches_total = sum(
+            int(entry.get('additional_branches') or 0)
+            for entry in (beam_data.get('stirrups_config') or [])
+        )
+
+        return StirrupDesignSummary(
+            diameter=DEFAULT_STIRRUP_DIAMETER,
+            hook_type=DEFAULT_STIRRUP_HOOK_TYPE,
+            additional_branches_total=additional_branches_total,
+            span_specs=span_specs,
+            zone_segments=zone_segments,
+        )
     
     def _calculate_development_lengths(self, beam_data: Dict) -> Dict[str, float]:
         """Calcula longitudes de desarrollo ajustadas según NSR-10 C.12.2"""

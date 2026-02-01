@@ -37,6 +37,7 @@ const BlockReinforcement = ({
   isDetailingComputing = false,
   detailingError = null,
   nsrWarnings = [],
+  stirrupTypeOptions = [],
 }) => {
   const {
     isComputing: fallbackDetailingComputing,
@@ -411,52 +412,53 @@ const BlockReinforcement = ({
         <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-400">Estribos</h2>
         <button
           type="button"
-          onClick={() => appendStirrup({ zone: '', spacing_m: '', quantity: '' })}
+          onClick={() =>
+            appendStirrup({
+              additional_branches: 0,
+              stirrup_type: stirrupTypeOptions[0]?.value || 'C',
+            })
+          }
           className="text-xs uppercase tracking-[0.3em] text-primary"
         >
-          + Añadir zona
+          + Añadir rama
         </button>
       </div>
       <div className="space-y-3">
         {stirrupFields.map((field, index) => (
-          <div key={field.id} className="grid md:grid-cols-3 gap-3 items-end">
+          <div key={field.id} className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-3 items-start">
             <div>
-              <label className="label">Zona</label>
-              <input className="input" {...register(`stirrups_config.${index}.zone`)} />
-              {errors.stirrups_config?.[index]?.zone && (
-                <p className="text-rose-400 text-xs mt-1">{errors.stirrups_config[index].zone.message}</p>
-              )}
-            </div>
-            <div>
-              <label className="label">Espaciamiento (m)</label>
+              <label className="label">Ramas adicionales</label>
               <input
                 type="number"
-                step="0.01"
-                lang="en"
-                inputMode="decimal"
+                min={0}
                 className="input"
-                {...register(`stirrups_config.${index}.spacing_m`, { valueAsNumber: true })}
+                {...register(`stirrups_config.${index}.additional_branches`, { valueAsNumber: true })}
               />
-            </div>
-            <div className="flex items-end gap-3">
-              <div className="flex-1">
-                <label className="label">Cantidad</label>
-                <input
-                  type="number"
-                  className="input"
-                  {...register(`stirrups_config.${index}.quantity`, { valueAsNumber: true })}
-                />
-              </div>
-              {stirrupFields.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeStirrup(index)}
-                  className="text-xs uppercase tracking-[0.3em] text-slate-400"
-                >
-                  Quitar
-                </button>
+              {errors.stirrups_config?.[index]?.additional_branches && (
+                <p className="text-rose-400 text-xs mt-1">
+                  {errors.stirrups_config[index].additional_branches.message}
+                </p>
               )}
             </div>
+            <div>
+              <label className="label">Tipo de estribo</label>
+              <select className="input" {...register(`stirrups_config.${index}.stirrup_type`)}>
+                {stirrupTypeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {stirrupFields.length > 1 && (
+              <button
+                type="button"
+                onClick={() => removeStirrup(index)}
+                className="text-xs uppercase tracking-[0.3em] text-slate-400 self-end"
+              >
+                Quitar
+              </button>
+            )}
           </div>
         ))}
         {errors.stirrups_config?.message && <p className="text-rose-400 text-xs">{errors.stirrups_config.message}</p>}
