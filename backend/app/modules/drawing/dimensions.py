@@ -7,9 +7,9 @@ from app.modules.drawing.geometry import to_drawing_units
 class DimensionRenderer:
     def __init__(
         self,
-        offset_total_mm: float = 120.0,
-        offset_spans_mm: float = 140.0,
-        top_offset_mm: float = 120.0,
+        offset_total_mm: float = 200.0,
+        offset_spans_mm: float = 200.0,
+        top_offset_mm: float = 200.0,
     ) -> None:
         self.offset_total_mm = offset_total_mm
         self.offset_spans_mm = offset_spans_mm
@@ -27,13 +27,12 @@ class DimensionRenderer:
                 start=(context.origin[0], base_y),
                 end=(context.origin[0] + total_length, base_y),
                 offset=25.0,
-                text_override=f"{geometry.total_length_m:.2f} m",
+                text_override=f"{geometry.total_length_m:.2f}",
                 metadata={"text_height": context.text_height_mm},
             )
         )
 
         span_offset = base_y - self.offset_spans_mm
-        support_offset = span_offset - self.offset_spans_mm
         for span in geometry.spans:
             start_x = context.origin[0] + to_drawing_units(span.start_m, document.units)
             end_x = context.origin[0] + to_drawing_units(span.end_m, document.units)
@@ -43,7 +42,7 @@ class DimensionRenderer:
                     start=(start_x, span_offset),
                     end=(end_x, span_offset),
                     offset=20.0,
-                    text_override=f"{span.clear_length_m:.2f} m",
+                    text_override=f"{span.clear_length_m:.2f}",
                     metadata={"text_height": context.text_height_mm},
                 )
             )
@@ -57,10 +56,10 @@ class DimensionRenderer:
             document.add_entity(
                 DimensionEntity(
                     layer=dim_layer,
-                    start=(start_x, support_offset),
-                    end=(end_x, support_offset),
+                    start=(start_x, span_offset),
+                    end=(end_x, span_offset),
                     offset=20.0,
-                    text_override=f"{width_m:.2f} m",
+                    text_override=f"{width_m:.2f}",
                     metadata={"text_height": context.text_height_mm},
                 )
             )
@@ -84,7 +83,7 @@ class DimensionRenderer:
                     start=(start_x, top_y),
                     end=(end_x, top_y),
                     offset=20.0,
-                    text_override=f"{length_m:.2f} m",
+                    text_override=f"{length_m:.2f}",
                     metadata={"text_height": context.text_height_mm},
                 )
             )

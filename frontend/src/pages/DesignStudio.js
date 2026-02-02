@@ -680,6 +680,24 @@ const DesignStudio = () => {
     }
   };
 
+  const syncDesignDetailing = async (designId) => {
+    if (!designId) {
+      return null;
+    }
+    try {
+      const response = await apiClient.post(`/api/v1/tools/despiece/designs/${designId}/compute-detailing`);
+      if (response.data?.success && response.data?.results) {
+        setDetailingResults(response.data.results);
+        setShowDetailing(true);
+      }
+      return response.data;
+    } catch (error) {
+      const backendMessage = error.response?.data?.detail;
+      toast.error(backendMessage || 'No se pudo sincronizar el despiece con el plano.');
+      return null;
+    }
+  };
+
   const onSubmit = async (values) => {
     setIsSubmitting(true);
     try {
@@ -782,6 +800,8 @@ const DesignStudio = () => {
 
       setLastDesign(response.data);
       toast.success('Despiece guardado correctamente.');
+
+      await syncDesignDetailing(response.data?.id);
     } catch (error) {
       const backendMessage = error.response?.data?.detail;
       toast.error(backendMessage || error.message || 'No se pudo guardar el despiece.');
