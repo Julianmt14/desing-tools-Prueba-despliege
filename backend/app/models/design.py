@@ -38,6 +38,11 @@ class Design(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    exports = relationship(
+        "DesignExport",
+        back_populates="design",
+        cascade="all, delete-orphan",
+    )
 
 
 class DespieceViga(Base):
@@ -178,3 +183,32 @@ class DespieceViga(Base):
             score += 10
 
         return max(0, min(100, score))
+
+
+class DesignExport(Base):
+    __tablename__ = "design_exports"
+
+    id = Column(Integer, primary_key=True)
+    job_id = Column(String(64), nullable=False, unique=True, index=True)
+    design_id = Column(Integer, ForeignKey("designs.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    template = Column(String(100), nullable=False)
+    format = Column(String(10), nullable=False)
+    scale = Column(Float, nullable=False, default=50)
+    locale = Column(String(10), nullable=False, default="es-CO")
+    include_preview = Column(Boolean, nullable=False, default=False)
+    status = Column(String(20), nullable=False, default="queued")
+    message = Column(Text, nullable=True)
+    file_path = Column(String(500), nullable=True)
+    preview_path = Column(String(500), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    design = relationship("Design", back_populates="exports")
+    user = relationship("User", backref="design_exports")
