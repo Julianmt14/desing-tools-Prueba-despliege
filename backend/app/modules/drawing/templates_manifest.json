@@ -1,0 +1,26 @@
+{
+  "templates": [
+    {
+      "key": "beam/default",
+      "locale": "es-CO",
+      "metadata": {
+        "title_block_label": "DESPIECE DE VIGA",
+        "notes": ["Norma NSR-10", "fc' y fy según especificación"]
+      }
+    },
+    {
+      "key": "beam/aci-en",
+      "locale": "en-US",
+      "cover_cm_override": 5,
+      "metadata": {
+        "title_block_label": "BEAM REBAR SCHEDULE",
+        "notes": ["ACI 318-19", "Grade 60"]
+      },
+      "text_styles": {
+        "labels": {"name": "T-LABELS-EN", "height": 2.8, "font": "simplex.shx"},
+        "dimensions": {"name": "T-DIMS-EN", "height": 2.3, "font": "simplex.shx"},
+        "title": {"name": "T-TITLE-EN", "height": 4.5, "font": "simplex.shx"}
+      }
+    }
+  ]
+}
