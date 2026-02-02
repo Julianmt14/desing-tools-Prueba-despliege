@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from app.modules.drawing.domain import HatchEntity, PolylineEntity, TextEntity
+from app.modules.drawing.domain import PolylineEntity, TextEntity
 from app.modules.drawing.geometry import rectangle, to_drawing_units
 
 
@@ -34,15 +34,6 @@ class BeamRenderer:
         )
         document.add_entity(outline)
 
-        hatch_layer = context.layer("beam_hatch")
-        hatch = HatchEntity(
-            layer=hatch_layer,
-            boundary=rectangle(origin, total_length_mm, height_mm),
-            pattern=self.config.hatch_pattern,
-            scale=self.config.hatch_scale,
-        )
-        document.add_entity(hatch)
-
         self._draw_supports(document, context)
         self._draw_axis_markers(document, context)
 
@@ -50,10 +41,11 @@ class BeamRenderer:
         support_layer = context.layer("supports")
         style = context.layer_style("supports")
         y0 = context.origin[1]
+        support_height = context.beam_height_mm
         for support in context.payload.geometry.supports:
             start = to_drawing_units(support.start_m, document.units)
             width = to_drawing_units(support.width_m, document.units)
-            points = rectangle((context.origin[0] + start, y0 - 20.0), width, 20.0)
+            points = rectangle((context.origin[0] + start, y0), width, support_height)
             document.add_entity(
                 PolylineEntity(
                     layer=support_layer,
@@ -68,10 +60,13 @@ class BeamRenderer:
         axis_layer = context.layer("axes")
         text_style = context.template.text_style("labels")
         style = context.layer_style("axes")
+        extension_top = 25.0 * context.vertical_scale
+        extension_bottom = 35.0 * context.vertical_scale
+        label_offset = 10.0 * context.vertical_scale
         for marker in context.payload.geometry.axis_markers:
             x = context.origin[0] + to_drawing_units(marker.position_m, document.units)
-            top = context.origin[1] + context.beam_height_mm + 25.0
-            bottom = context.origin[1] - 35.0
+            top = context.origin[1] + context.beam_height_mm + extension_top
+            bottom = context.origin[1] - extension_bottom
             document.add_entity(
                 PolylineEntity(
                     layer=axis_layer,
@@ -84,8 +79,8 @@ class BeamRenderer:
                 TextEntity(
                     layer=context.layer("text"),
                     content=marker.label,
-                    insert=(x - 5.0, top + 10.0),
-                    height=text_style.height,
+                    insert=(x - 5.0, top + label_offset),
+                    height=context.text_height_mm,
                     style=text_style.name,
                 )
             )

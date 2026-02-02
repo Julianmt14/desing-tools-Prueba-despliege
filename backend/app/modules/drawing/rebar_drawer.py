@@ -19,11 +19,12 @@ class RebarDrawer:
         layer_style = context.layer_style("rebar_main")
         text_style = context.template.text_style("labels")
         counters = defaultdict(int)
+        gap = self.stack_gap_mm * context.vertical_scale
 
         def bar_y(position: str, index: int) -> float:
             if position == "top":
-                return context.origin[1] + context.beam_height_mm - context.cover_mm - index * self.stack_gap_mm
-            return context.origin[1] + context.cover_mm + index * self.stack_gap_mm
+                return context.origin[1] + context.beam_height_mm - context.cover_mm - index * gap
+            return context.origin[1] + context.cover_mm + index * gap
 
         for bar in list(results.top_bars) + list(results.bottom_bars):
             counters[bar.position] += 1
@@ -42,12 +43,13 @@ class RebarDrawer:
             )
 
             label = f"{bar.id} Φ{bar.diameter} L={bar.length_m:.2f}m"
+            text_offset = (12.0 if bar.position == "top" else -18.0) * context.vertical_scale
             document.add_entity(
                 TextEntity(
                     layer=context.layer("text"),
                     content=label,
-                    insert=(start_x, y + (12.0 if bar.position == "top" else -18.0)),
-                    height=text_style.height,
+                    insert=(start_x, y + text_offset),
+                    height=context.text_height_mm,
                     style=text_style.name,
                 )
             )

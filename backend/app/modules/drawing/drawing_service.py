@@ -21,6 +21,8 @@ class RenderContext:
     cover_mm: float
     locale: str
     origin: tuple[float, float] = (0.0, 0.0)
+    vertical_scale: float = 1.0
+    text_height_mm: float = 120.0
 
     def layer(self, alias: str) -> str:
         return self.template.layer_name(alias, alias)
@@ -35,9 +37,11 @@ class BeamDrawingService:
         *,
         template_key: str | None = "beam/default",
         scale: float = 50.0,
+        vertical_scale: float = 6.0,
     ) -> None:
         self.template_key = template_key or "beam/default"
         self.scale = scale
+        self.vertical_scale = vertical_scale
         self.beam_renderer = BeamRenderer()
         self.rebar_drawer = RebarDrawer()
         self.dimension_renderer = DimensionRenderer()
@@ -65,13 +69,18 @@ class BeamDrawingService:
             },
         )
         space = CoordinateSpace(units=payload.drawing_units)
+        vertical_scale = self.vertical_scale
+        beam_height = self._beam_height_mm(payload, doc) * vertical_scale
+        cover_mm = self._cover_mm(payload, template, doc) * vertical_scale
         context = RenderContext(
             payload=payload,
             template=template,
             space=space,
-            beam_height_mm=self._beam_height_mm(payload, doc),
-            cover_mm=self._cover_mm(payload, template, doc),
+            beam_height_mm=beam_height,
+            cover_mm=cover_mm,
             locale=render_locale,
+            vertical_scale=vertical_scale,
+            text_height_mm=120.0,
         )
 
         self.beam_renderer.draw(doc, context)
