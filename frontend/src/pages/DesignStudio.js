@@ -512,15 +512,6 @@ const DesignStudio = () => {
     setValue('beam_total_length_m', nextValue, { shouldDirty: true });
   }, [beamTotalLength, watchBeamTotalLength, setValue]);
 
-  const preview = useMemo(() => {
-    const totalLength =
-      watchSpanGeometries?.reduce((sum, span) => sum + Number(span.clear_span_between_supports_m || 0), 0) || 0;
-    const stirrupCount = watchStirrups?.reduce((sum, stirrup) => sum + Number(stirrup.additional_branches || 0), 0) || 0;
-    return {
-      totalLength: totalLength.toFixed(2),
-      stirrupCount,
-    };
-  }, [watchSpanGeometries, watchStirrups]);
   const detailingStirrupsSummary = detailingResults?.stirrups_summary;
   const stirrupSegmentsByZone = useMemo(() => {
     if (!detailingStirrupsSummary?.zone_segments) {
@@ -924,30 +915,6 @@ const DesignStudio = () => {
         </section>
 
         <aside className="space-y-6">
-          <div className="bg-[#050b16] border border-slate-800 rounded-3xl p-6 shadow-[0_20px_60px_rgba(2,6,23,0.65)]">
-            <p className="text-[11px] uppercase tracking-[0.5em] text-slate-500 mb-5">Vista previa</p>
-            <div className="h-44 rounded-2xl border border-primary/30 relative overflow-hidden bg-gradient-to-br from-slate-900 to-slate-950">
-              <div className="absolute inset-4 border border-dashed border-primary/30 rounded-2xl" />
-              <div className="absolute top-4 left-6 bg-primary/20 text-primary text-[11px] px-3 py-1 rounded-full font-mono">
-                Luz total: {preview.totalLength} m
-              </div>
-              <div className="absolute bottom-4 right-6 bg-emerald-500/20 text-emerald-300 text-[11px] px-3 py-1 rounded-full font-mono">
-                Estribos: {preview.stirrupCount}
-              </div>
-              <div className="absolute inset-0 flex items-center justify-center gap-2">
-                {watchSpanGeometries?.map((span, index) => (
-                  <div
-                    key={`${span.label || 'luz'}-${index}`}
-                    className="h-12 border border-primary/50 rounded-full px-4 flex flex-col justify-center text-[10px] text-slate-200"
-                  >
-                    <span className="font-mono text-primary tracking-[0.3em]">L{index + 1}</span>
-                    <span>L={span.clear_span_between_supports_m || '--'} m · {span.section_base_cm || '--'}x{span.section_height_cm || '--'} cm</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
           <div className="bg-[#050b16] border border-slate-800 rounded-3xl p-6 space-y-4 shadow-[0_20px_60px_rgba(2,6,23,0.65)]">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold uppercase tracking-[0.35em] text-slate-400">Especificación estribos</h2>
@@ -999,35 +966,47 @@ const DesignStudio = () => {
                       Total estimado de estribos: <span className="text-slate-100 font-semibold">{stirrupEstimatedTotal}</span> uds
                     </p>
                   ) : null}
-                  {['confined', 'non_confined'].map((zoneKey) => {
-                    const segments = stirrupSegmentsByZone?.[zoneKey] || [];
-                    const label = zoneKey === 'confined' ? 'Zona confinada (d/4)' : 'Zona no confinada (d/2)';
+                  {(() => {
+                    const mergedSegments = Object.entries(stirrupSegmentsByZone || {})
+                      .flatMap(([zoneKey, segments = []]) =>
+                        segments.map((segment) => ({
+                          ...segment,
+                          zoneKey,
+                        }))
+                      )
+                      .sort((a, b) => a.start_m - b.start_m);
+
+                    if (!mergedSegments.length) {
+                      return <p className="text-slate-500">Sin segmentos definidos.</p>;
+                    }
+
                     return (
-                      <div key={zoneKey}>
-                        <p className="text-[10px] uppercase tracking-[0.35em] text-slate-500 mb-1">{label}</p>
-                        {segments.length ? (
-                          <div className="space-y-1">
-                            {segments.map((segment, idx) => (
-                              <div
-                                key={`${zoneKey}-${idx}`}
-                                className="grid grid-cols-[auto_auto_auto] gap-3 items-center bg-[#090f1e] border border-slate-800 rounded-xl px-3 py-1 text-slate-200"
-                              >
-                                <span className="text-primary text-[11px] font-semibold">
-                                  {(segment.spacing_m * 100).toFixed(1)} cm
-                                </span>
-                                <span>{segment.start_m.toFixed(2)} – {segment.end_m.toFixed(2)} m</span>
-                                <span className="text-right text-slate-400">
-                                  {segment.estimated_count ?? '—'} uds
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-slate-500">Sin segmentos definidos.</p>
-                        )}
+                      <div className="space-y-1">
+                        {mergedSegments.map((segment, idx) => {
+                          const spacingCm = (segment.spacing_m * 100).toFixed(1);
+                          const start = segment.start_m.toFixed(2);
+                          const end = segment.end_m.toFixed(2);
+                          const count = segment.estimated_count ?? '—';
+                          const isConfined = segment.zoneKey === 'confined';
+                          const zoneLabel = isConfined ? 'ZC (d/4)' : 'ZNC (d/2)';
+                          const zoneBadgeClass = isConfined ? 'bg-primary/20 text-primary' : 'bg-emerald-500/10 text-emerald-300';
+                          return (
+                            <div
+                              key={`${segment.zoneKey}-${start}-${idx}`}
+                              className="grid grid-cols-[auto_auto_auto_auto] gap-3 items-center bg-[#090f1e] border border-slate-800 rounded-xl px-3 py-1 text-slate-200"
+                            >
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${zoneBadgeClass}`}>
+                                {zoneLabel}
+                              </span>
+                              <span className="text-primary text-[11px] font-semibold">{spacingCm} cm</span>
+                              <span>{start} – {end} m</span>
+                              <span className="text-right text-slate-400">{count} uds</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
-                  })}
+                  })()}
                 </div>
               ) : (
                 <p className="text-xs text-slate-500">Genera el despiece para visualizar la distribución normativa.</p>
