@@ -10,7 +10,7 @@ from app.modules.drawing.rebar_drawer import RebarDrawer
 from app.modules.drawing.stirrup_renderer import StirrupRenderer
 from app.modules.drawing.schemas import BeamDrawingPayload, DrawingExportRequest
 from app.modules.drawing.templates import TemplateConfig, get_template_config
-from app.modules.drawing.title_block import TitleBlockRenderer
+from app.modules.drawing.title_block import RightInfoBoxRenderer, TitleBlockRenderer
 
 
 @dataclass(slots=True)
@@ -48,6 +48,7 @@ class BeamDrawingService:
         self.dimension_renderer = DimensionRenderer()
         self.stirrup_renderer = StirrupRenderer()
         self.title_block_renderer = TitleBlockRenderer()
+        self.right_info_box_renderer = RightInfoBoxRenderer()
 
     def render_document(
         self,
@@ -90,6 +91,7 @@ class BeamDrawingService:
         self.stirrup_renderer.draw(doc, context)
         self.dimension_renderer.draw(doc, context)
         self.title_block_renderer.draw(doc, context)
+        self.right_info_box_renderer.draw(doc, context)
         return doc
 
     def _beam_height_mm(self, payload: BeamDrawingPayload, document: DrawingDocument) -> float:
