@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import math
 
 from app.modules.drawing.domain import PolylineEntity, TextEntity
 from app.modules.drawing.geometry import to_drawing_units
+from app.modules.drawing.section_template import SectionTemplateError, get_section_template
+
+logger = logging.getLogger(__name__)
 
 
 def rounded_rect_points(x_min, y_min, width, height, radius, segments=4):
@@ -316,6 +320,309 @@ class RightInfoBoxRenderer:
             )
         )
 
+        self._draw_section_schematic(
+            document,
+            context,
+            origin_x,
+            bottom,
+            width,
+            top,
+            label_insert[1],
+        )
+
+    def _section_schematic_data(self, context):
+        geometry = context.payload.geometry
+        spans = geometry.spans or []
+        base_cm = spans[0].section_width_cm if spans else 30.0
+        height_cm = spans[0].section_height_cm if spans else 45.0
+        rebar_layout = getattr(context.payload, "rebar_layout", None)
+        cover_cm = getattr(rebar_layout, "cover_cm", None) or 4.0
+        detailing = getattr(context.payload, "detailing_results", None)
+        summary = getattr(detailing, "stirrups_summary", None) if detailing else None
+        stirrup_width_cm = None
+        stirrup_height_cm = None
+        hook_type = "135"
+        stirrup_diameter = "#3"
+        if summary:
+            hook_type = summary.hook_type or hook_type
+            stirrup_diameter = summary.diameter or stirrup_diameter
+            if summary.span_specs:
+                spec = summary.span_specs[0]
+                stirrup_width_cm = spec.stirrup_width_cm
+                stirrup_height_cm = spec.stirrup_height_cm
+                cover_cm = spec.cover_cm or cover_cm
+                base_cm = spec.base_cm or base_cm
+                height_cm = spec.height_cm or height_cm
+        if not stirrup_width_cm:
+            stirrup_width_cm = max(base_cm - 2 * cover_cm, base_cm * 0.7)
+        if not stirrup_height_cm:
+            stirrup_height_cm = max(height_cm - 2 * cover_cm, height_cm * 0.7)
+        return {
+            "base_mm": base_cm * 10.0,
+            "height_mm": height_cm * 10.0,
+            "cover_mm": cover_cm * 10.0,
+            "stirrup_width_mm": stirrup_width_cm * 10.0,
+            "stirrup_height_mm": stirrup_height_cm * 10.0,
+            "hook_type": hook_type,
+            "stirrup_diameter": stirrup_diameter,
+        }
+
+    def _draw_section_schematic(self, document, context, box_left, box_bottom, box_width, box_top, reference_y):
+        data = self._section_schematic_data(context)
+        try:
+            template = get_section_template()
+        except SectionTemplateError as exc:  # pragma: no cover - dependencia externa
+            logger.warning("No se pudo cargar el template de sección: %s", exc)
+            self._draw_section_schematic_legacy(document, context, box_left, box_bottom, box_width, box_top, reference_y, data)
+            return
+
+        if template.width <= 0 or template.height <= 0:
+            self._draw_section_schematic_legacy(document, context, box_left, box_bottom, box_width, box_top, reference_y, data)
+            return
+
+        gap = 250.0
+        schematic_bottom = reference_y + gap
+        max_height = box_top - schematic_bottom - 150.0
+        max_width = box_width - 400.0
+        if max_height <= 0 or max_width <= 0:
+            return
+
+        scale = 0.7 * min(max_width / template.width, max_height / template.height)
+        if scale <= 0:
+            self._draw_section_schematic_legacy(document, context, box_left, box_bottom, box_width, box_top, reference_y, data)
+            return
+
+        target_width = template.width * scale
+        target_left = box_left + (box_width - target_width) / 2.0
+        offset = (
+            target_left - template.min_x * scale,
+            schematic_bottom - template.min_y * scale,
+        )
+
+        placeholders = self._section_placeholder_values(data)
+        text_style = context.template.text_style("title")
+
+        try:
+            entities = template.instantiate(
+                scale=scale,
+                offset=offset,
+                shape_layer=context.layer("title_block"),
+                text_layer=context.layer("text"),
+                text_style=text_style.name,
+                placeholders=placeholders,
+            )
+        except Exception as exc:  # pragma: no cover - defensivo ante DXF inválido
+            logger.warning("No se pudo instanciar el template de sección: %s", exc)
+            self._draw_section_schematic_legacy(document, context, box_left, box_bottom, box_width, box_top, reference_y, data)
+            return
+
+        for entity in entities:
+            document.add_entity(entity)
+
+    def _section_placeholder_values(self, data):
+        return {
+            "BASE_VIGA": f"B = {data['base_mm'] / 1000:.2f} m",
+            "ALTURA_VIGA": f"H = {data['height_mm'] / 1000:.2f} m",
+            "BASE_ESTRIBO": f"b_e = {data['stirrup_width_mm'] / 1000:.2f} m",
+            "ALTURA_ESTRIBO": f"h_e = {data['stirrup_height_mm'] / 1000:.2f} m",
+            "GANCHO_ESTRIBO": f"Gancho {data['hook_type']}° - {data['stirrup_diameter']}",
+            "RECUBRIMIENTO": f"Recubrimiento = {data['cover_mm'] / 10:.0f} cm",
+        }
+
+    def _draw_section_schematic_legacy(
+        self,
+        document,
+        context,
+        box_left,
+        box_bottom,
+        box_width,
+        box_top,
+        reference_y,
+        data,
+    ):
+        data = data or self._section_schematic_data(context)
+        base_mm = data["base_mm"]
+        height_mm = data["height_mm"]
+        if base_mm <= 0 or height_mm <= 0:
+            return
+        gap = 250.0
+        schematic_bottom = reference_y + gap
+        max_height = box_top - schematic_bottom - 150.0
+        max_width = box_width - 400.0
+        if max_height <= 0 or max_width <= 0:
+            return
+        scale = 0.7 * min(max_width / base_mm, max_height / height_mm)
+        if scale <= 0:
+            return
+        section_width = base_mm * scale
+        section_height = height_mm * scale
+        section_left = box_left + (box_width - section_width) / 2.0
+        section_bottom = schematic_bottom
+        section_top = section_bottom + section_height
+
+        def rect_points(left, bottom, width, height):
+            return [
+                (left, bottom),
+                (left + width, bottom),
+                (left + width, bottom + height),
+                (left, bottom + height),
+                (left, bottom),
+            ]
+
+        def circle_points(cx, cy, radius, segments=12):
+            return [
+                (
+                    cx + radius * math.cos(2 * math.pi * i / segments),
+                    cy + radius * math.sin(2 * math.pi * i / segments),
+                )
+                for i in range(segments + 1)
+            ]
+
+        text_layer = context.layer("text")
+        text_style = context.template.text_style("title")
+        text_height = context.text_height_mm * 0.9
+        shape_layer = context.layer("title_block")
+
+        document.add_entity(
+            PolylineEntity(
+                layer=shape_layer,
+                points=rect_points(section_left, section_bottom, section_width, section_height),
+            )
+        )
+
+        stirrup_width = data["stirrup_width_mm"] * scale
+        stirrup_height = data["stirrup_height_mm"] * scale
+        stirrup_left = section_left + (section_width - stirrup_width) / 2.0
+        stirrup_bottom = section_bottom + (section_height - stirrup_height) / 2.0
+        document.add_entity(
+            PolylineEntity(
+                layer=shape_layer,
+                points=rect_points(stirrup_left, stirrup_bottom, stirrup_width, stirrup_height),
+            )
+        )
+
+        bar_radius = max(5.0, 12.0 * scale)
+        bar_points = [
+            (stirrup_left + bar_radius, stirrup_bottom + bar_radius),
+            (stirrup_left + stirrup_width - bar_radius, stirrup_bottom + bar_radius),
+            (stirrup_left + bar_radius, stirrup_bottom + stirrup_height - bar_radius),
+            (stirrup_left + stirrup_width - bar_radius, stirrup_bottom + stirrup_height - bar_radius),
+        ]
+        for (cx, cy) in bar_points:
+            document.add_entity(
+                PolylineEntity(
+                    layer=shape_layer,
+                    points=circle_points(cx, cy, bar_radius),
+                )
+            )
+
+        diag_points = [
+            (section_left + section_width * 0.55, section_bottom + section_height * 0.65),
+            (section_left + section_width * 0.7, section_bottom + section_height * 0.8),
+            (section_left + section_width * 0.75, section_bottom + section_height * 0.6),
+            (section_left + section_width * 0.6, section_bottom + section_height * 0.45),
+        ]
+        document.add_entity(
+            PolylineEntity(
+                layer=shape_layer,
+                points=diag_points,
+            )
+        )
+
+        diag_points_2 = [
+            (section_left + section_width * 0.65, section_bottom + section_height * 0.4),
+            (section_left + section_width * 0.85, section_bottom + section_height * 0.55),
+            (section_left + section_width * 0.9, section_bottom + section_height * 0.35),
+            (section_left + section_width * 0.7, section_bottom + section_height * 0.2),
+        ]
+        document.add_entity(
+            PolylineEntity(
+                layer=shape_layer,
+                points=diag_points_2,
+            )
+        )
+
+        top_label = (section_left + section_width / 2.0, section_top + 120.0)
+        left_label = (section_left - 80.0, section_bottom + section_height / 2.0)
+        document.add_entity(
+            TextEntity(
+                layer=text_layer,
+                content=f"B = {data['base_mm'] / 1000:.2f} m",
+                insert=top_label,
+                height=text_height,
+                style=text_style.name,
+                metadata={"halign": 1, "align_point": top_label},
+            )
+        )
+        document.add_entity(
+            TextEntity(
+                layer=text_layer,
+                content=f"H = {data['height_mm'] / 1000:.2f} m",
+                insert=left_label,
+                height=text_height,
+                style=text_style.name,
+                metadata={"halign": 2, "align_point": left_label},
+            )
+        )
+
+        cover_label = (section_left + section_width / 2.0, stirrup_bottom - 120.0)
+        document.add_entity(
+            TextEntity(
+                layer=text_layer,
+                content=f"Recubrimiento = {data['cover_mm'] / 10:.0f} cm",
+                insert=cover_label,
+                height=text_height * 0.9,
+                style=text_style.name,
+                metadata={"halign": 1, "align_point": cover_label},
+            )
+        )
+
+        stirrup_label = (section_left + section_width / 2.0, stirrup_bottom + stirrup_height / 2.0)
+        document.add_entity(
+            TextEntity(
+                layer=text_layer,
+                content=(
+                    f"Estribo = {data['stirrup_width_mm'] / 1000:.2f} m x {data['stirrup_height_mm'] / 1000:.2f} m"
+                ),
+                insert=stirrup_label,
+                height=text_height * 0.8,
+                style=text_style.name,
+                metadata={"halign": 1, "align_point": stirrup_label},
+            )
+        )
+
+        hook_width = data["stirrup_width_mm"] * scale * 0.8
+        hook_height = data["stirrup_height_mm"] * scale * 0.9
+        hook_left = section_left + section_width + 120.0
+        hook_bottom = section_bottom + section_height * 0.1
+        hook_points = [
+            (hook_left, hook_bottom),
+            (hook_left + hook_width, hook_bottom),
+            (hook_left + hook_width, hook_bottom + hook_height * 0.6),
+            (hook_left + hook_width * 0.7, hook_bottom + hook_height * 0.8),
+            (hook_left + hook_width * 0.9, hook_bottom + hook_height),
+            (hook_left + hook_width * 0.6, hook_bottom + hook_height),
+            (hook_left + hook_width * 0.2, hook_bottom + hook_height * 0.6),
+            (hook_left + hook_width * 0.2, hook_bottom),
+        ]
+        document.add_entity(
+            PolylineEntity(
+                layer=shape_layer,
+                points=hook_points,
+            )
+        )
+
+        hook_label = (hook_left + hook_width / 2.0, hook_bottom + hook_height + 120.0)
+        document.add_entity(
+            TextEntity(
+                layer=text_layer,
+                content=f"Gancho {data['hook_type']}° - {data['stirrup_diameter']}",
+                insert=hook_label,
+                height=text_height * 0.85,
+                style=text_style.name,
+                metadata={"halign": 1, "align_point": hook_label},
+            )
+        )
     def _draw_inner_outline(self, document, layer, style, origin_x, bottom, width, height, outer_radius):
         offset = self.config.inner_offset_mm
         if width <= 2 * offset or height <= 2 * offset:
