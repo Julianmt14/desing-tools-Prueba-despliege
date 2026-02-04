@@ -1,5 +1,11 @@
-[build]
-cmd = "npm install && npm run build"
+[phases.setup]
+nixPkgs = ["nodejs_18"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build", "npm install -g serve"]
 
 [start]
-cmd = "npx serve -s build -l ${PORT:-3000}"
+cmd = "serve -s build -l $PORT"
