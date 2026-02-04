@@ -1,4 +1,9 @@
+import sys
+from pathlib import Path
 from logging.config import fileConfig
+
+# Agregar el directorio raíz al path de Python
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import engine_from_config, pool
 from alembic import context
